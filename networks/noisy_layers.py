@@ -20,7 +20,6 @@ class NoisyLayer(nn.Module):
     pre_sample = False
     record_delta: bool = False
 
-    # self.register_buffer('stdev')
     def __init__(self, *args,
                  use_range: bool=True,
                  pre_sample: bool=False,
@@ -71,18 +70,18 @@ class NoisyLayer(nn.Module):
             self.apply_perturbation(**perturbation)
 
     @cached_property_with_ttl(ttl=30)
-    def perturbation_stdev_dict(self) -> dict:
+    def param_range_dict(self) -> dict:
         epsilon = 1e-8
-        stdev_dict = {}
+        range_dict = {}
         if not self.use_range:
             for param in self.parameters_to_perturb:
                 if hasattr(self, param) and getattr(self, param) is not None:
-                    stdev_dict[param] = 1
+                    range_dict[param] = 1
         else:
             for param in self.parameters_to_perturb: # bias and weight
                 if hasattr(self, param) and getattr(self, param) is not None:
                     setattr(self, param + "_range", cal_range(getattr(self, param), self.noise_range))
-                    stdev_dict[param] = max(getattr(self, param + "_range"), epsilon)
+                    range_dict[param] = max(getattr(self, param + "_range"), epsilon)
             if self.match_range: # only match bias and weight
                 assert len(self.parameters_to_match) == 2, "Can only match ranges of 2 parameters"
                 range_names_to_match = [param + "_range" for param in self.parameters_to_match]
@@ -92,9 +91,25 @@ class NoisyLayer(nn.Module):
                     if range_to_match[0] != 0 and range_to_match[1] != 0:
                         range_factor = range_to_match[0] / range_to_match[1]
                         self.merged_weight_range = cal_range(torch.cat((getattr(self, param_name_1).view(-1) / range_factor, getattr(self, param_name_2).view(-1))), self.noise_range)
-                        stdev_dict[param_name_1] = self.merged_weight_range * range_factor # bias
-                        stdev_dict[param_name_2] = self.merged_weight_range # weight
+                        range_dict[param_name_1] = self.merged_weight_range * range_factor # bias
+                        range_dict[param_name_2] = self.merged_weight_range # weight
+        return range_dict
+    
+    # @cached_property_with_ttl(ttl=30)
+    @property
+    def perturbation_stdev_dict(self) -> dict:
+        stdev_dict = {}
+        for param in self.param_range_dict:
+            stdev_dict[param] = self.param_range_dict[param] * self.sigma
         return stdev_dict
+
+    # @cached_property_with_ttl(ttl=30)
+    @property
+    def perturbation_mean_dict(self) -> dict:
+        mean_dict = {}
+        for param in self.param_range_dict:
+            mean_dict[param] = self.param_range_dict[param] * self.mu
+        return mean_dict
 
     def get_perturbation(self) -> dict:
         """Return the parameter perturbation.
@@ -103,9 +118,9 @@ class NoisyLayer(nn.Module):
         perturbation_dict = {}
         # pylint: disable=unsubscriptable-object,not-an-iterable
         with torch.no_grad():
-            for param in self.perturbation_stdev_dict:
+            for param in self.param_range_dict:
                 n = self.sample_perturbation(getattr(self, param), 1, sampler=self.sampler)
-                perturbation_dict[param] = self.perturbation_stdev_dict[param] * self.sigma * n + self.mu * self.perturbation_stdev_dict[param]
+                perturbation_dict[param] = self.param_range_dict[param] * self.sigma * n + self.mu * self.param_range_dict[param]
                 if self.record_delta:
                     assert self.noise_type == "gaussian", "delta values are only useful for Gaussian perturbation"
                     buffer_name = "delta_" + param
@@ -113,13 +128,17 @@ class NoisyLayer(nn.Module):
                         self.register_buffer(buffer_name, torch.empty_like(getattr(self, param)))
                     if self.mu is not 0:
                         # FIXME: what should this be?
-                        self.__dict__[buffer_name] = n / self.perturbation_stdev_dict[param] - self.mu / self.sigma ** 2
+                        if self.sigma:
+                            # self.__dict__[buffer_name] = n / self.perturbation_stdev_dict[param] - self.mu / self.sigma ** 2
+                            self.__dict__[buffer_name] = perturbation_dict[param] - self.mu / self.sigma ** 2
                     else:
-                        self.__dict__[buffer_name] = n / self.perturbation_stdev_dict[param]
+                        self.__dict__[buffer_name] = perturbation_dict[param]
 
         return perturbation_dict
 
     def apply_perturbation(self, **perturbation_dict):
+        """Apply the specified perturbations
+        """
         for param in perturbation_dict:
             perturbation = perturbation_dict[param]
             getattr(self, param).data.add_(perturbation)
@@ -188,6 +207,8 @@ class NoisyLinear(NoisyLayer, nn.Linear):
         s = super().extra_repr()
         if self.sigma:
             s += ', sigma={sigma}'
+        if self.mu:
+            s += ', mu={mu}'
         return s.format(**self.__dict__)
 
 
@@ -262,7 +283,6 @@ class NoisyBN(NoisyLayer, nn.modules.batchnorm._BatchNorm):
             return F.conv2d(input, self.w_eff, self.b_eff, stride=1, groups=self.num_features)
         else:
             return F.batch_norm(input, self.running_mean, self.running_var, self.weight, self.bias, self.training, self.momentum, self.eps) 
-
 
 def set_noisy(m, noisy=True):
     if isinstance(m, NoisyConv2d) or isinstance(m, NoisyLinear) or isinstance(m, NoisyIdentity) or isinstance(m, NoisyBN):
