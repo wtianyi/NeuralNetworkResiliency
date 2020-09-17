@@ -22,7 +22,7 @@ class TestQuantizeNetwork(unittest.TestCase):
             device=[0],
             cpu=True
         )
-        cls.dataset, _, cls.num_classes = getDatasets("mnist")
+        cls.dataset, _, cls.num_classes = get_datasets("mnist")
         cls.dataloader = torch.utils.data.DataLoader(cls.dataset, batch_size=16, shuffle=True, num_workers=0)
 
     def test_quantize_network(self):

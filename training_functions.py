@@ -100,6 +100,8 @@ def quantize_network(net: nn.Module, num_quantization_levels: int, calibration_d
 
 
 class Clipper(dict):  # inherit dict to be serializable
+    """A scheduler for grad clipping
+    """
     def __init__(self, max_norm: float = None, decay_factor: float = 1, decay_interval: int = None, max_decay_times: int = None):
         assert max_norm is None or max_norm > 0
         assert decay_factor > 0 and decay_factor <= 1
@@ -138,26 +140,25 @@ class Clipper(dict):  # inherit dict to be serializable
         string = ", ".join(["{}={}".format(k, getattr(self, k)) for k in keys])
         return "Clipper(" + string + ")"
 
+    @staticmethod
+    def from_str(string: str):
+        """The parser for the grad_clip"""
+        if string is None:
+            return Clipper()
 
-def grad_clipper(string: str) -> Clipper:
-    """The parser for the grad_clip"""
-    clipper = Clipper()
-    if string is None:
-        return clipper
-
-    toks = string.split(":")
-    try:
-        if len(toks) == 1:
-            clipper = Clipper(float(toks[0]))
-        elif len(toks) == 3:
-            clipper = Clipper(float(toks[0]), float(toks[1]), int(toks[2]))
-        elif len(toks) == 4:
-            clipper = Clipper(float(toks[0]), float(
-                toks[1]), int(toks[2]), int(toks[3]))
-        else:
+        toks = string.split(":")
+        try:
+            if len(toks) == 1:
+                clipper = Clipper(float(toks[0]))
+            elif len(toks) == 3:
+                clipper = Clipper(float(toks[0]), float(toks[1]), int(toks[2]))
+            elif len(toks) == 4:
+                clipper = Clipper(float(toks[0]), float(
+                    toks[1]), int(toks[2]), int(toks[3]))
+            else:
+                msg = "Required format: <init_max_norm>[:<decay_factor>:<decay_interval>[:<max_decay_count>]]"
+                raise argparse.ArgumentTypeError(msg)
+        except Exception as e:
             msg = "Required format: <init_max_norm>[:<decay_factor>:<decay_interval>[:<max_decay_count>]]"
             raise argparse.ArgumentTypeError(msg)
-    except Exception as e:
-        msg = "Required format: <init_max_norm>[:<decay_factor>:<decay_interval>[:<max_decay_count>]]"
-        raise argparse.ArgumentTypeError(msg)
-    return clipper
+        return clipper

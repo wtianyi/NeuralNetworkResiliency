@@ -2,21 +2,45 @@ from networks import *
 import config as cf
 import torchvision
 import torchvision.transforms as transforms
+import torch
+from torch.utils.data import Dataset, TensorDataset
 import sys
-import os, shutil
+import os
+import shutil
 
-def getDatasets(dataset: str):
+
+def get_morse_datasets(mat_path: str) -> (Dataset, Dataset, int):
+    from scipy.io import matlab
+    data = matlab.loadmat(mat_path)
+    x = torch.from_numpy(data['images'].T.astype('float32'))
+    y = torch.from_numpy(data['labels'].astype('int').ravel())
+    x_test = torch.from_numpy(data['t_images'].T.astype('float32'))
+    y_test = torch.from_numpy(data['t_labels'].astype('int').ravel())
+
+    num_classes = torch.unique(y).nelement()
+
+    train_set = TensorDataset(x, y)
+    test_set = TensorDataset(x_test, y_test)
+
+    return train_set, test_set, num_classes
+
+
+def get_datasets(dataset: str):
+    if dataset == 'morse':
+        print("| Preparing Morse dataset...")
+        sys.stdout.write("| ")
+        return get_morse_datasets('./data/Morse_trainning_set.mat')
     transform_train_CIFAR = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
-    ]) # meanstd transformation
+    ])  # meanstd transformation
 
     transform_train_MNIST = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
-    ]) # meanstd transformation
+    ])  # meanstd transformation
 
     transform_test_CIFAR = transforms.Compose([
         transforms.ToTensor(),
@@ -28,27 +52,34 @@ def getDatasets(dataset: str):
         transforms.ToTensor(),
         transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
     ])
-    if(dataset == 'cifar10'):
+    if dataset == 'cifar10':
         print("| Preparing CIFAR-10 dataset...")
         sys.stdout.write("| ")
-        trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train_CIFAR)
-        testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test_CIFAR)
+        trainset = torchvision.datasets.CIFAR10(
+            root='./data', train=True, download=True, transform=transform_train_CIFAR)
+        testset = torchvision.datasets.CIFAR10(
+            root='./data', train=False, download=True, transform=transform_test_CIFAR)
         num_classes = 10
-    elif(dataset == 'cifar100'):
+    elif dataset == 'cifar100':
         print("| Preparing CIFAR-100 dataset...")
         sys.stdout.write("| ")
-        trainset = torchvision.datasets.CIFAR100(root='./data', train=True, download=True, transform=transform_train_CIFAR)
-        testset = torchvision.datasets.CIFAR100(root='./data', train=False, download=True, transform=transform_test_CIFAR)
+        trainset = torchvision.datasets.CIFAR100(
+            root='./data', train=True, download=True, transform=transform_train_CIFAR)
+        testset = torchvision.datasets.CIFAR100(
+            root='./data', train=False, download=True, transform=transform_test_CIFAR)
         num_classes = 100
-    elif(dataset == 'mnist'):
+    elif dataset == 'mnist':
         print("| Preparing MNIST dataset...")
         sys.stdout.write("| ")
-        trainset = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform_train_MNIST)
-        testset = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test_MNIST)
+        trainset = torchvision.datasets.MNIST(
+            root='./data', train=True, download=True, transform=transform_train_MNIST)
+        testset = torchvision.datasets.MNIST(
+            root='./data', train=False, download=True, transform=transform_test_MNIST)
         num_classes = 10
     return trainset, testset, num_classes
 
-def getNetworkName(args):
+
+def get_network_name(args):
     parts = []
     parts.append(args.net_type)
     if args.training_noise_type == 'gaussian' and args.training_noise is None:
@@ -80,7 +111,7 @@ def getNetworkName(args):
 
 # Return network & file name
 def _get_network(net_type: str, depth: int, dropout_rate: float, dataset: str, num_classes: int,
-                 widen_factor: int=1, training_noise_type: str = "gaussian", training_noise: float = None):
+                 widen_factor: int = 1, training_noise_type: str = "gaussian", training_noise: float = None):
     if net_type == 'lenet':
         if dataset == 'mnist':
             net = LeNet(num_classes, input_size=28, input_channel=1)
@@ -88,11 +119,16 @@ def _get_network(net_type: str, depth: int, dropout_rate: float, dataset: str, n
             net = LeNet(num_classes, input_size=32, input_channel=3)
     if net_type == 'resnet':
         if dataset == 'mnist':
-            net = ResNet(depth, num_classes, use_dropout = True, dropout_rate = dropout_rate, in_channel=1)
+            net = ResNet(depth, num_classes, use_dropout=True,
+                         dropout_rate=dropout_rate, in_channel=1)
         else:
-            net = ResNet(depth, num_classes, use_dropout = True, dropout_rate = dropout_rate, in_channel=3)
+            net = ResNet(depth, num_classes, use_dropout=True,
+                         dropout_rate=dropout_rate, in_channel=3)
     if net_type == 'wide_resnet':
         net = WideResNet(depth, widen_factor, dropout_rate, num_classes)
+
+    if net_type == 'mlp':
+        net = MLP(20, 20, [20])
 
     if training_noise_type == 'gaussian' and training_noise is None:
         net.apply(set_gaussian_noise)
@@ -102,12 +138,14 @@ def _get_network(net_type: str, depth: int, dropout_rate: float, dataset: str, n
         net.apply(set_gaussian_noise)
     return net
 
-def getNetwork(args, num_classes: int):
+
+def get_network(args, num_classes: int):
     net = _get_network(net_type=args.net_type, depth=args.depth, dropout_rate=args.dropout_rate,
                        dataset=args.dataset, num_classes=num_classes, widen_factor=args.widen_factor,
                        training_noise_type=args.training_noise_type, training_noise=args.training_noise)
-    file_name = getNetworkName(args)
+    file_name = get_network_name(args)
     return net, file_name
+
 
 def create_or_clear_dir(path, force=False):
     if not os.path.exists(path):
@@ -127,4 +165,9 @@ def create_or_clear_dir(path, force=False):
             os.unlink(path)
             os.makedirs(path)
         else:
-            raise NotADirectoryError("f{path} is a file")
+            raise NotADirectoryError(f"{path} is a file")
+
+
+def create_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)

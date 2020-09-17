@@ -128,7 +128,9 @@ class NoisyLayer(nn.Module):
     def forward(self, input):
         raise NotImplementedError
 
-    def to_original(self):
+    def to_original(self) -> None:
+        """Modify self.__class__ to pretend as non-noisy conterparts
+        """
         raise NotImplementedError
 
 class NoisyConv2d(NoisyLayer, nn.Conv2d):

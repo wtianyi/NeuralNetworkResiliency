@@ -41,11 +41,11 @@ parser.add_argument('--num_epochs', '-n', default=200, type=int, help='num_epoch
 parser.add_argument('--epochs_lr_decay', '-a', default=60, type=int, help='epochs_for_lr_decay')
 parser.add_argument('--lr_decay_rate', default=0.2, type=float, help='lr_decay_rate')
 parser.add_argument('--batch_size', '-s', default=200, type=int, help='batch size')
-parser.add_argument('--net_type', default='resnet', choices=['resnet', 'wide_resnet', 'lenet'], type=str, help='model')
+parser.add_argument('--net_type', default='resnet', choices=['resnet', 'wide_resnet', 'lenet', 'mlp'], type=str, help='model')
 parser.add_argument('--depth', default=18, type=int, help='depth of model')
 parser.add_argument('--widen_factor', default=10, type=int, help='width of model')
 parser.add_argument('--dropout_rate', default=0.3, type=float, help='dropout_rate')
-parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'mnist'], help='dataset = [cifar10/cifar100/mnist]')
+parser.add_argument('--dataset', default='cifar10', type=str, choices=['cifar10', 'cifar100', 'mnist', 'morse'], help='dataset = [cifar10/cifar100/mnist]')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 parser.add_argument('--testOnly', '-t', action='store_true', help='Test mode with the saved model')
 parser.add_argument('--test_sample_num', type=int, default=20, help='The number of test runs per setting in testOnly mode')
@@ -131,14 +131,14 @@ print('\n[Phase 1] : Data Preparation')
 # start_epoch, num_epochs, batch_size, optim_type = cf.start_epoch, args.num_epochs, args.batch_size, args.optim_type
 start_epoch, num_epochs, batch_size, optim_type = 0, args.num_epochs, args.batch_size, args.optim_type
 
-trainset, testset, num_classes = getDatasets(args.dataset)
+trainset, testset, num_classes = get_datasets(args.dataset)
 
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=0)
 testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=0)
 
 #####################################################
 print('\n[Phase 2] : Model setup')
-net, file_name = getNetwork(args, num_classes=num_classes)
+net, file_name = get_network(args, num_classes=num_classes)
 print('| Building net...')
 print (file_name)
 net.apply(conv_init)
@@ -151,7 +151,7 @@ if use_cuda:
     cudnn.benchmark = True
 
 def network_constructor():
-    net, file_name = getNetwork(args, num_classes=num_classes)
+    net, file_name = get_network(args, num_classes=num_classes)
     if use_cuda:
         if torch.cuda.device_count() > 1 and len(args.device) > 1:
             net = torch.nn.DataParallel(net, device_ids=range(torch.cuda.device_count()))
@@ -279,10 +279,11 @@ def save_model(net, save_point, args, metric = 1, stats_dict: dict=None):
     }
     if stats_dict is not None:
         state.update(stats_dict)
-    if not os.path.isdir('checkpoint'):
-        os.mkdir('checkpoint')
-    if not os.path.isdir(save_point):
-        os.mkdir(save_point)
+    # if not os.path.isdir('checkpoint'):
+    #     os.mkdir('checkpoint')
+    # if not os.path.isdir(save_point):
+    #     os.mkdir(save_point)
+    create_dir(save_point)
     if metric==1:
         save_file = os.path.join(save_point, file_name + "_metric1.pkl")
         torch.save(state, save_file)
