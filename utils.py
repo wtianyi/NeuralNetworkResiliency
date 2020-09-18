@@ -1,6 +1,85 @@
 from networks import *
+import config as cf
+import torchvision
+import torchvision.transforms as transforms
+import torch
+from torch.utils.data import Dataset, TensorDataset
+import sys
+import os
+import shutil
 
-def getNetworkName(args):
+
+def get_morse_datasets(mat_path: str) -> (Dataset, Dataset, int):
+    from scipy.io import matlab
+    data = matlab.loadmat(mat_path)
+    x = torch.from_numpy(data['images'].T.astype('float32'))
+    y = torch.from_numpy(data['labels'].astype('int').ravel())
+    x_test = torch.from_numpy(data['t_images'].T.astype('float32'))
+    y_test = torch.from_numpy(data['t_labels'].astype('int').ravel())
+
+    num_classes = torch.unique(y).nelement()
+
+    train_set = TensorDataset(x, y)
+    test_set = TensorDataset(x_test, y_test)
+
+    return train_set, test_set, num_classes
+
+
+def get_datasets(dataset: str):
+    if dataset == 'morse':
+        print("| Preparing Morse dataset...")
+        sys.stdout.write("| ")
+        return get_morse_datasets('./data/Morse_trainning_set.mat')
+    transform_train_CIFAR = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
+    ])  # meanstd transformation
+
+    transform_train_MNIST = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
+    ])  # meanstd transformation
+
+    transform_test_CIFAR = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
+    ])
+
+    transform_test_MNIST = transforms.Compose([
+        # transforms.Pad(padding=2, fill=0),
+        transforms.ToTensor(),
+        transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
+    ])
+    if dataset == 'cifar10':
+        print("| Preparing CIFAR-10 dataset...")
+        sys.stdout.write("| ")
+        trainset = torchvision.datasets.CIFAR10(
+            root='./data', train=True, download=True, transform=transform_train_CIFAR)
+        testset = torchvision.datasets.CIFAR10(
+            root='./data', train=False, download=True, transform=transform_test_CIFAR)
+        num_classes = 10
+    elif dataset == 'cifar100':
+        print("| Preparing CIFAR-100 dataset...")
+        sys.stdout.write("| ")
+        trainset = torchvision.datasets.CIFAR100(
+            root='./data', train=True, download=True, transform=transform_train_CIFAR)
+        testset = torchvision.datasets.CIFAR100(
+            root='./data', train=False, download=True, transform=transform_test_CIFAR)
+        num_classes = 100
+    elif dataset == 'mnist':
+        print("| Preparing MNIST dataset...")
+        sys.stdout.write("| ")
+        trainset = torchvision.datasets.MNIST(
+            root='./data', train=True, download=True, transform=transform_train_MNIST)
+        testset = torchvision.datasets.MNIST(
+            root='./data', train=False, download=True, transform=transform_test_MNIST)
+        num_classes = 10
+    return trainset, testset, num_classes
+
+
+def get_network_name(args):
     parts = []
     parts.append(args.net_type)
     if args.training_noise_type == 'gaussian' and args.training_noise is None:
@@ -10,7 +89,7 @@ def getNetworkName(args):
     else:
         parts.append('noise_std-{}'.format(args.training_noise))
     if args.training_noise_mean is None:
-        parts.append('noise_mean-[0.0]'.format(args.training_noise))
+        parts.append('noise_mean-[0.0]')
     else:
         parts.append('noise_mean-{}'.format(args.training_noise_mean))
 
@@ -31,73 +110,64 @@ def getNetworkName(args):
 
 
 # Return network & file name
-def getNetwork(args, num_classes):
-    if args.net_type == 'lenet':
-        if args.dataset == 'mnist':
+def _get_network(net_type: str, depth: int, dropout_rate: float, dataset: str, num_classes: int,
+                 widen_factor: int = 1, training_noise_type: str = "gaussian", training_noise: float = None):
+    if net_type == 'lenet':
+        if dataset == 'mnist':
             net = LeNet(num_classes, input_size=28, input_channel=1)
-        if args.dataset == 'cifar10':
+        if dataset == 'cifar10':
             net = LeNet(num_classes, input_size=32, input_channel=3)
-    if args.net_type == 'resnet':
-        if args.dataset == 'mnist':
-            net = ResNet(args.depth, num_classes, use_dropout = True, dropout_rate = args.dropout_rate, in_channel=1)
+    if net_type == 'resnet':
+        if dataset == 'mnist':
+            net = ResNet(depth, num_classes, use_dropout=True,
+                         dropout_rate=dropout_rate, in_channel=1)
         else:
-            net = ResNet(args.depth, num_classes, use_dropout = True, dropout_rate = args.dropout_rate, in_channel=3)
+            net = ResNet(depth, num_classes, use_dropout=True,
+                         dropout_rate=dropout_rate, in_channel=3)
+    if net_type == 'wide_resnet':
+        net = WideResNet(depth, widen_factor, dropout_rate, num_classes)
 
-    if args.training_noise_type == 'gaussian' and args.training_noise is None:
+    if net_type == 'mlp':
+        net = MLP(20, 20, [20])
+
+    if training_noise_type == 'gaussian' and training_noise is None:
         net.apply(set_gaussian_noise)
-    elif args.training_noise_type == 'uniform':
+    elif training_noise_type == 'uniform':
         net.apply(set_uniform_noise)
     else:
         net.apply(set_gaussian_noise)
+    return net
 
-    file_name = getNetworkName(args)
 
+def get_network(args, num_classes: int):
+    net = _get_network(net_type=args.net_type, depth=args.depth, dropout_rate=args.dropout_rate,
+                       dataset=args.dataset, num_classes=num_classes, widen_factor=args.widen_factor,
+                       training_noise_type=args.training_noise_type, training_noise=args.training_noise)
+    file_name = get_network_name(args)
     return net, file_name
 
 
-def write_acc_excel(args, book, testing_noise_list, noisy_test_acc, noisy_test_acc_5, noisy_test_acc_all, noisy_test_acc_5_all):
-    row, col = 0, 0
-    _, file_name = getNetwork(args)
-    sheet = book.add_sheet('1')
-        
-    for i in range (len(testing_noise_list)):
-        sheet.write(row, col+i+1, testing_noise_list[i])
+def create_or_clear_dir(path, force=False):
+    if not os.path.exists(path):
+        os.makedirs(path)
+    elif os.path.isdir(path):
+        for filename in os.listdir(path):
+            file_path = os.path.join(path, filename)
+            # try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+            # except Exception as e:
+                # print('Failed to delete %s. Reason: %s' % (file_path, e))
+    else:
+        if force:
+            os.unlink(path)
+            os.makedirs(path)
+        else:
+            raise NotADirectoryError(f"{path} is a file")
 
-    row += 1
-    sheet.write(row, col, file_name+'_top1')
-    for i in range (len(noisy_test_acc)):
-        sheet.write(row, col+i+1, noisy_test_acc[i])
 
-    row += 1
-    for i in range(len(testing_noise_list)):
-        col += 1
-        for j in range(len(noisy_test_acc_all[str(testing_noise_list[i])])):
-            sheet.write(row+j+1, col, noisy_test_acc_all[str(testing_noise_list[i])][j])
-
-
-    row += (len(noisy_test_acc_all['0.02'])+1)
-    col = 0
-    for i in range(len(testing_noise_list)):
-        sheet.write(row, col+i+1, np.std(np.asarray(noisy_test_acc_all[str(testing_noise_list[i])])))
-
-    row += 2
-    col = 0
-
-    sheet.write(row, col, file_name + '_top5')
-    for i in range (len(noisy_test_acc_5)):
-        sheet.write(row, col+i+1, noisy_test_acc_5[i])
-
-    row += 1
-
-    for i in range (len(testing_noise_list)):
-        col += 1
-        for j in range(len(noisy_test_acc_5_all[str(testing_noise_list[i])])):
-            sheet.write(row+j+1, col, noisy_test_acc_5_all[str(testing_noise_list[i])][j])
-
-    row += (len(noisy_test_acc_5_all['0.02'])+1)
-
-    col = 0
-    for i in range(len(testing_noise_list)):
-        sheet.write(row, col+i+1, np.std(np.asarray(noisy_test_acc_5_all[str(testing_noise_list[i])])))
-
-    book.save('./excel/'+ file_name + '.xls')
+def create_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)

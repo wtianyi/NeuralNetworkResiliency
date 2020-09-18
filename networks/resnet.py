@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from .noisy_layers import *
+from .quantization import CustomFakeQuantize, get_activation_quant, enable_fake_quant, enable_observer, disable_fake_quant, disable_observer
 from .network_utils import children_of_class, num_parameters
 from typing import Iterable
 from itertools import cycle
@@ -36,7 +37,8 @@ def cfg(depth):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_planes, planes, stride=1, use_dropout=True, dropout_rate=0.3):
+    def __init__(self, in_planes, planes, stride=1, use_dropout=True,
+                 dropout_rate=0.3, quantization_levels=256):
         super(BasicBlock, self).__init__()
 
         self.use_dropout = use_dropout
@@ -48,6 +50,7 @@ class BasicBlock(nn.Module):
         self.bn1 = NoisyBN(planes)
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = NoisyBN(planes)
+        self.out_quant = get_activation_quant(quantization_levels, enable=False)
         
         if stride != 1 or in_planes != self.expansion * planes:
             self.downsample = nn.Sequential(
@@ -64,13 +67,15 @@ class BasicBlock(nn.Module):
             out = self.dropout(out)
         out += self.downsample(x)
         out = F.relu(out)
+        out = self.out_quant(out)
 
         return out
 
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, in_planes, planes, stride=1, use_dropout=True, dropout_rate=0.3):
+    def __init__(self, in_planes, planes, stride=1, use_dropout=True,
+                 dropout_rate=0.3, quantization_levels=256):
         super(Bottleneck, self).__init__()
 
         self.use_dropout = use_dropout
@@ -84,6 +89,7 @@ class Bottleneck(nn.Module):
         self.bn2 = NoisyBN(planes)
         self.conv3 = conv1x1(planes, self.expansion*planes)
         self.bn3 = NoisyBN(self.expansion*planes)
+        self.out_quant = get_activation_quant(quantization_levels, enable=False)
 
         if stride != 1 or in_planes != self.expansion * planes:
             self.downsample = nn.Sequential(
@@ -102,6 +108,7 @@ class Bottleneck(nn.Module):
             out = self.dropout(out)
         out += self.downsample(x)
         out = F.relu(out)
+        out = self.out_quant(out)
 
         return out
 
@@ -165,6 +172,19 @@ class ResNet(nn.Module):
 
         for l, m in zip(noisy_layer_list, cycle(mu_list)):
             l.mu = m
+    
+    def enable_quantization(self, flag: bool=True) -> None:
+        for quant in children_of_class(self, CustomFakeQuantize):
+            if flag:
+                quant.enable_fake_quant()
+                # quant.enable_observer()
+            else:
+                quant.disable_fake_quant()
+                # quant.disable_observer()
+
+    def set_quantization_level(self, quantization_levels: int) -> None:
+        for quant in children_of_class(self, CustomFakeQuantize):
+            quant.set_qmin_qmax(0, quantization_levels - 1)
 
     def set_sigma_list(self, sigma_list):
         """ Allow None, scalar, 1-length list or
@@ -173,7 +193,7 @@ class ResNet(nn.Module):
         noisy_conv_list = list(children_of_class(self, NoisyConv2d))
 
         if sigma_list is None:
-            conv_sigma_list = [sigma_list] * len(noisy_conv_list)
+            conv_sigma_list = [0] * len(noisy_conv_list)
         else:
             try:
                 conv_sigma_list = float(sigma_list)
@@ -191,7 +211,7 @@ class ResNet(nn.Module):
         noisy_fc_list = list(children_of_class(self, NoisyLinear))
 
         if sigma_list is None:
-            fc_sigma_list = [sigma_list] * len(noisy_fc_list)
+            fc_sigma_list = [0] * len(noisy_fc_list)
         else:
             try:
                 fc_sigma_list = float(sigma_list)
@@ -209,7 +229,7 @@ class ResNet(nn.Module):
         noisy_id_list = list(children_of_class(self, NoisyIdentity))
         
         if sigma_list is None:
-            id_sigma_list = [sigma_list] * len(noisy_id_list)
+            id_sigma_list = [0] * len(noisy_id_list)
         else:
             try:
                 id_sigma_list = float(sigma_list)
@@ -227,7 +247,7 @@ class ResNet(nn.Module):
         noisy_bn_list = list(children_of_class(self, NoisyBN))
 
         if sigma_list is None:
-            bn_sigma_list = [sigma_list] * len(noisy_bn_list)
+            bn_sigma_list = [0] * len(noisy_bn_list)
         else:
             try:
                 bn_sigma_list = float(sigma_list)
