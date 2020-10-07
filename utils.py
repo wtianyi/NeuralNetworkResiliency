@@ -1,3 +1,4 @@
+from typing import Tuple
 from networks import *
 import config as cf
 import torchvision
@@ -7,9 +8,35 @@ from torch.utils.data import Dataset, TensorDataset
 import sys
 import os
 import shutil
+import numpy as np
+import random
 
 
-def get_morse_datasets(mat_path: str) -> (Dataset, Dataset, int):
+def set_random_seed(seed: int, using_cuda: bool = False) -> None:
+    """
+    Seed the different random generators
+    Args:
+        seed (int): The random seed
+        using_cuda (bool): Whether torch.cuda needs seed fixed
+    """
+    # Seed python RNG
+    try:
+        random.seed(seed)
+    except:
+        pass
+    # Seed numpy RNG
+    np.random.seed(seed)
+    # seed the RNG for all devices (both CPU and CUDA)
+    torch.manual_seed(seed)
+
+    if using_cuda:
+        torch.cuda.manual_seed(seed)
+        # Deterministic operations for CuDNN, it may impact performances
+        torch.backends.cudnn.deterministic = True
+        # torch.backends.cudnn.benchmark = False
+
+
+def get_morse_datasets(mat_path: str) -> Tuple[Dataset, Dataset, int]:
     from scipy.io import matlab
     data = matlab.loadmat(mat_path)
     x = torch.from_numpy(data['images'].T.astype('float32'))
@@ -76,6 +103,8 @@ def get_datasets(dataset: str):
         testset = torchvision.datasets.MNIST(
             root='./data', train=False, download=True, transform=transform_test_MNIST)
         num_classes = 10
+    else:
+        raise ValueError(f"Unrecognized dataset ({dataset})")
     return trainset, testset, num_classes
 
 
@@ -115,20 +144,26 @@ def _get_network(net_type: str, depth: int, dropout_rate: float, dataset: str, n
     if net_type == 'lenet':
         if dataset == 'mnist':
             net = LeNet(num_classes, input_size=28, input_channel=1)
-        if dataset == 'cifar10':
+        elif dataset == 'cifar10':
             net = LeNet(num_classes, input_size=32, input_channel=3)
-    if net_type == 'resnet':
+        else:
+            raise ValueError(f"Unrecognized dataset ({dataset}) for lenet")
+    elif net_type == 'resnet':
         if dataset == 'mnist':
             net = ResNet(depth, num_classes, use_dropout=True,
                          dropout_rate=dropout_rate, in_channel=1)
         else:
             net = ResNet(depth, num_classes, use_dropout=True,
                          dropout_rate=dropout_rate, in_channel=3)
-    if net_type == 'wide_resnet':
+    elif net_type == 'wide_resnet':
         net = WideResNet(depth, widen_factor, dropout_rate, num_classes)
-
-    if net_type == 'mlp':
-        net = MLP(20, 20, [20])
+    elif net_type == 'mlp':
+        if dataset == 'morse':
+            net = MLP(20, 20, [20])
+        else:
+            raise ValueError(f"Unrecognized dataset ({dataset}) for mlp")
+    else:
+        raise ValueError(f"Unrecognized net_type ({net_type})")
 
     if training_noise_type == 'gaussian' and training_noise is None:
         net.apply(set_gaussian_noise)
@@ -171,3 +206,5 @@ def create_or_clear_dir(path, force=False):
 def create_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)
+    elif not os.path.isdir(path):
+        raise NotADirectoryError(f"{path} is a file")
