@@ -1,16 +1,20 @@
-import torch
-import torch.nn as nn
-import torch.nn.init as init
-import torch.nn.functional as F
-from .noisy_layers import *
-from .quantization import CustomFakeQuantize, get_activation_quant, enable_fake_quant, enable_observer, disable_fake_quant, disable_observer
-from .network_utils import num_parameters, children_of_class
+import sys
 # TODO: move this along with the set_mu_list and set_sigma_list to NoisyModule base class
 from itertools import cycle
-from typing import Iterable
+from numbers import Real
+from typing import Iterable, Union
 
-import sys
 import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.nn.init as init
+
+from .network_utils import children_of_class, num_parameters
+from .noisy_layers import *
+from .quantization import (CustomFakeQuantize, disable_fake_quant,
+                           disable_observer, enable_fake_quant,
+                           enable_observer, get_activation_quant)
 
 
 def conv3x3(in_planes, out_planes, stride=1, sigma=False):
@@ -158,7 +162,7 @@ class WideResNet(nn.Module):
         for l, m in zip(noisy_layer_list, cycle(mu_list)):
             l.mu = m
 
-    def set_sigma_list(self, sigma_list: Iterable) -> None:
+    def set_sigma_list(self, sigma_list: Union[Iterable, Real]) -> None:
         noisy_layer_list = list(children_of_class(self, NoisyLayer))
 
         if sigma_list is None:
@@ -170,79 +174,3 @@ class WideResNet(nn.Module):
                 pass
         for l, s in zip(noisy_layer_list, cycle(sigma_list)):
             l.sigma = s
-
-    # def set_sigma_list(self, sigma_list):
-    #     """ Allow None, scalar, 1-length list or
-    #     list with the length of the number of noisy layers
-    #     """
-    #     noisy_conv_list = list(children_of_class(self, NoisyConv2d))
-
-    #     if sigma_list is None:
-    #         conv_sigma_list = [sigma_list] * len(noisy_conv_list)
-    #     else:
-    #         try:
-    #             conv_sigma_list = float(sigma_list)
-    #             conv_sigma_list = [conv_sigma_list] * len(noisy_conv_list)
-    #         except:
-    #             assert type(sigma_list) == list
-    #             if len(sigma_list) == 1:
-    #                 conv_sigma_list = sigma_list * len(noisy_conv_list)
-    #             else:
-    #                 assert len(conv_sigma_list) == len(noisy_conv_list)
-
-    #     for m, s in zip(noisy_conv_list, conv_sigma_list):
-    #         m.sigma = s
-
-    #     noisy_fc_list = list(children_of_class(self, NoisyLinear))
-
-    #     if sigma_list is None:
-    #         fc_sigma_list = [sigma_list] * len(noisy_fc_list)
-    #     else:
-    #         try:
-    #             fc_sigma_list = float(sigma_list)
-    #             fc_sigma_list = [fc_sigma_list] * len(noisy_fc_list)
-    #         except:
-    #             assert type(sigma_list) == list
-    #             if len(sigma_list) == 1:
-    #                 fc_sigma_list = sigma_list * len(noisy_fc_list)
-    #             else:
-    #                 assert len(fc_sigma_list) == len(noisy_fc_list)
-
-    #     for m, s in zip(noisy_fc_list, fc_sigma_list):
-    #         m.sigma = s
-
-    #     noisy_id_list = list(children_of_class(self, NoisyIdentity))
-
-    #     if sigma_list is None:
-    #         id_sigma_list = [sigma_list] * len(noisy_id_list)
-    #     else:
-    #         try:
-    #             id_sigma_list = float(sigma_list)
-    #             id_sigma_list = [id_sigma_list] * len(noisy_id_list)
-    #         except:
-    #             assert type(sigma_list) == list
-    #             if len(sigma_list) == 1:
-    #                 id_sigma_list = sigma_list * len(noisy_id_list)
-    #             else:
-    #                 assert len(id_sigma_list) == len(noisy_id_list)
-
-    #     for m, s in zip(noisy_id_list, id_sigma_list):
-    #         m.sigma = s
-
-    #     noisy_bn_list = list(children_of_class(self, NoisyBN))
-
-    #     if sigma_list is None:
-    #         bn_sigma_list = [sigma_list] * len(noisy_bn_list)
-    #     else:
-    #         try:
-    #             bn_sigma_list = float(sigma_list)
-    #             bn_sigma_list = [bn_sigma_list] * len(noisy_bn_list)
-    #         except:
-    #             assert type(sigma_list) == list
-    #             if len(sigma_list) == 1:
-    #                 bn_sigma_list = sigma_list * len(noisy_bn_list)
-    #             else:
-    #                 assert len(bn_sigma_list) == len(noisy_bn_list)
-
-    #     for m, s in zip(noisy_bn_list, bn_sigma_list):
-    #         m.sigma = s

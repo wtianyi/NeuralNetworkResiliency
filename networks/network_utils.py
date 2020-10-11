@@ -1,3 +1,6 @@
+from torch import nn
+
+
 def children_of_class(module, target_class):
     """A generator yielding layers of the specified class in a module"""
     if isinstance(module, target_class):
@@ -9,8 +12,10 @@ def children_of_class(module, target_class):
         except:
             pass
 
+
 def num_parameters(model):
     return sum([w.numel() for w in model.parameters()])
+
 
 # TODO: move to utils
 def accuracy(output, target, topk=(1,)):
@@ -28,9 +33,11 @@ def accuracy(output, target, topk=(1,)):
         res.append(correct_k.mul_(1.0 / batch_size))
     return res
 
+
 # TODO: move to utils
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -45,6 +52,7 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
 
 def loop_iterable(iterable):
     """https://stackoverflow.com/a/16638648"""

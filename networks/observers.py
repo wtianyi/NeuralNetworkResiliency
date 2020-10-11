@@ -1,5 +1,6 @@
 import torch
 from torch.quantization import *
+from torch import Tensor
 #: Modified from _ObserverBase
 class CustomObserverBase(ObserverBase):
     r"""Internal common base for all qint/quint8 observers.
@@ -591,7 +592,9 @@ class CustomHistogramObserver(CustomObserverBase):
         self.register_buffer('histogram', torch.zeros(self.bins))
         self.register_buffer('min_val', torch.tensor([]))
         self.register_buffer('max_val', torch.tensor([]))
-        self.dst_nbins = 2 ** torch.iinfo(self.dtype).bits
+        # use the custom q_max and q_min for the number of quantization levels
+        self.dst_nbins = quant_max - quant_min + 1
+        # self.dst_nbins = 2 ** torch.iinfo(self.dtype).bits
         self.upsample_rate = upsample_rate
 
     @torch.jit.ignore
@@ -659,6 +662,7 @@ class CustomHistogramObserver(CustomObserverBase):
                     delta_end = dst_bin_width / 2
                     norm = norm + _get_norm(delta_begin, delta_end, density, norm_type)
 
+                    # upper bound of the norm of the histogram difference for intermediate dst bins
                     norm = norm + (dst_bin_of_end - dst_bin_of_begin - 1) * _get_norm(
                         -dst_bin_width / 2, dst_bin_width / 2, density, norm_type
                     )

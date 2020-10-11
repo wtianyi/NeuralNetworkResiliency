@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
-import config as cf
+# import config as cf
 
 import torchvision
 import torchvision.transforms as transforms
@@ -173,19 +173,21 @@ def train(net, epoch, optimizer, tensorboard_writer=None, clipper=None, trajecto
             inputs, targets = inputs.cuda(device=device), targets.cuda(device=device) # GPU settings
         inputs, targets = inputs, targets
 
-        if args.forward_samples == 1:
-            optimizer.zero_grad()
+        optimizer.zero_grad()
+        for _ in range(args.forward_samples):
             outputs = net(inputs)
             loss = criterion(outputs, targets)
             train_loss.update(loss.item(), inputs.size(0))
             loss.backward()
-            optimizer.step()
-            if trajectory_logger is not None:
-                trajectory_logger.add_param_log(net, global_step)
-                trajectory_logger.add_grad_log(net, global_step)
-                trajectory_logger.commit()
-        else:
-            pass
+
+        for p in net.parameters():
+            p.grad.data.mul_(1/args.forward_sample)
+
+        optimizer.step()
+        if trajectory_logger is not None:
+            trajectory_logger.add_param_log(net, global_step)
+            trajectory_logger.add_grad_log(net, global_step)
+            trajectory_logger.commit()
 
         optimizer.step() # Optimizer update
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1,5))
@@ -247,7 +249,11 @@ def test_with_std_mean(network_constructor: Callable, checkpoint, epoch = 0, tes
             net.apply(set_noisy)
             prepare_network_perturbation(net=net, noise_type=args.testing_noise_type, fixtest=True, perturbation_level=stdev, perturbation_mean=mean)
             if quantize_weights:
-                quantize_network(net=net, num_quantization_levels=quant_levels, calibration_dataloader=trainloader)
+                quantize_network(
+                    net=net, num_weight_quant_levels=quant_levels,
+                    num_activation_quant_levels=quant_levels,
+                    calibration_dataloader=trainloader
+                )
             else:
                 prepare_network_quantization(net=net, num_quantization_levels=quant_levels, calibration_dataloader=trainloader, qat=False)
             test_acc, test_acc_5 = test(net, epoch, testloader)
@@ -408,7 +414,7 @@ for epoch in range(start_epoch, start_epoch+num_epochs):
 
     epoch_time = time.time() - start_time
     elapsed_time += epoch_time
-    print('| Elapsed time : %d:%02d:%02d'  %(cf.get_hms(elapsed_time)))
+    print('| Elapsed time : %d:%02d:%02d'  %(get_hms(elapsed_time)))
     if type(writer) is SummaryWriter:
         writer.flush()
 

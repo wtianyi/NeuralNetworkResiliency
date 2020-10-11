@@ -20,6 +20,8 @@ from .noisy_layers import cal_range
 
 
 def _quantize_weight(float_wt, observer):
+    if observer is None: # allow dummy observer that leads to as-is quantization
+        return float_wt
     wt_scale, wt_zp = observer.calculate_qparams()
     if observer.qscheme in [torch.per_tensor_symmetric, torch.per_tensor_affine]:
         qweight = torch.quantize_per_tensor(
@@ -32,6 +34,7 @@ def _quantize_weight(float_wt, observer):
             wt_scale.to(torch.double), wt_zp.to(torch.int64), wt_axis, observer.dtype)
     else:
         raise ValueError("Unexpected qscheme " + observer.qscheme)
+    qweight = qweight.dequantize()
     return qweight
 
 
@@ -223,13 +226,11 @@ class Linear(torch.nn.Linear):
         act_scale, act_zp = activation_post_process.calculate_qparams()
         # assert dtype == torch.qint8, 'Weight observer must have dtype torch.qint8'
         # TODO: explicitly change to quantize per tensor
-        qweight = _quantize_weight(
-            mod.weight.float(), weight_post_process).dequantize()
+        qweight = _quantize_weight(mod.weight.float(), weight_post_process)
         if mod.bias is not None:
             bias_post_process = mod.qconfig.weight()
             bias_post_process(mod.bias)
-            qbias = _quantize_weight(
-                mod.bias.float(), bias_post_process).dequantize()
+            qbias = _quantize_weight(mod.bias.float(), bias_post_process)
 
         qlinear = cls(mod.in_features, mod.out_features, dtype=dtype)
         qlinear.set_weight_bias(qweight, qbias)
@@ -409,13 +410,11 @@ class _OrdinaryConvNd(_ConvNd):
         weight_post_process(mod.weight)
         act_scale, act_zp = mod.activation_post_process.calculate_qparams()
         # assert weight_post_process.dtype == torch.qint8, 'Weight observer must have a dtype of qint8'
-        qweight = _quantize_weight(
-            mod.weight.float(), weight_post_process).dequantize()
+        qweight = _quantize_weight(mod.weight.float(), weight_post_process)
         if mod.bias is not None:
             bias_post_process = mod.qconfig.weight()
             bias_post_process(mod.bias)
-            qbias = _quantize_weight(
-                mod.bias.float(), bias_post_process).dequantize()
+            qbias = _quantize_weight(mod.bias.float(), bias_post_process)
         qconv = cls(mod.in_channels, mod.out_channels, mod.kernel_size,
                     mod.stride, mod.padding, mod.dilation, mod.groups,
                     mod.bias is not None, mod.padding_mode)

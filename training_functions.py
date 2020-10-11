@@ -1,4 +1,5 @@
 import torch
+import torch.quantization
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from networks import set_gaussian_noise, set_uniform_noise, set_fixtest, disable_observer, disable_fake_quant, get_qconfig, CUSTOM_MODULE_MAPPING, CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST, children_of_class, NoisyLayer, CustomFakeQuantize
@@ -55,8 +56,11 @@ def prepare_network_quantization(
         quant.disable_observer()
 
 
-def quantize_network(net: nn.Module, num_quantization_levels: int, calibration_dataloader: torch.utils.data.DataLoader):
-    net.qconfig = get_qconfig(num_quantization_levels, 2*num_quantization_levels)
+def quantize_network(
+    net: nn.Module, num_weight_quant_levels: int, num_activation_quant_levels: int,
+    calibration_dataloader: torch.utils.data.DataLoader
+):
+    net.qconfig = get_qconfig(num_weight_quant_levels, num_weight_quant_levels)
 
     for noisy_layer in children_of_class(net, NoisyLayer):
         noisy_layer.to_original()
@@ -73,7 +77,7 @@ def quantize_network(net: nn.Module, num_quantization_levels: int, calibration_d
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(calibration_dataloader):
             inputs = inputs.to(device=device)
-            targets = targets.to(device=device)
+            # targets = targets.to(device=device)
             outputs = net(inputs)
     torch.quantization.convert(
         net, inplace=True,

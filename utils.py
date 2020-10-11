@@ -52,7 +52,23 @@ def get_morse_datasets(mat_path: str) -> Tuple[Dataset, Dataset, int]:
     return train_set, test_set, num_classes
 
 
-def get_datasets(dataset: str):
+def get_datasets(dataset: str) -> Tuple[Dataset, Dataset, int]:
+    """
+    Get train and test datasets by dataset name
+    choices are 'morse', 'mnist', 'cifar10', 'cifar100'
+
+    Args:
+        dataset (:obj:`str`):
+            The dataset name
+
+    Return:
+        trainset (:obj:`torch.utils.data.Dataset`):
+            The training dataset
+        testset (:obj:`torch.utils.data.Dataset`):
+            The test dataset
+        num_classes (:obj:`int`):
+            The number of classes in the dataset
+    """
     if dataset == 'morse':
         print("| Preparing Morse dataset...")
         sys.stdout.write("| ")
@@ -174,7 +190,22 @@ def _get_network(net_type: str, depth: int, dropout_rate: float, dataset: str, n
     return net
 
 
-def get_network(args, num_classes: int):
+def get_network(args, num_classes: int) -> Tuple[nn.Module, str]:
+    """
+    Get network model with args and number of classes to classify
+
+    Args:
+        args (:obj:`argparse.Namespace`):
+            The arguments
+        num_classes (:obj:`int`):
+            The number of classes
+
+    Return:
+        network (:obj:`torch.nn.Module`):
+            The network model
+        file_name (:obj:`str`):
+            A file name with the arguments composed in
+    """
     net = _get_network(net_type=args.net_type, depth=args.depth, dropout_rate=args.dropout_rate,
                        dataset=args.dataset, num_classes=num_classes, widen_factor=args.widen_factor,
                        training_noise_type=args.training_noise_type, training_noise=args.training_noise)
@@ -208,3 +239,10 @@ def create_dir(path):
         os.makedirs(path)
     elif not os.path.isdir(path):
         raise NotADirectoryError(f"{path} is a file")
+
+
+def get_hms(seconds):
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+
+    return h, m, s

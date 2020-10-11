@@ -6,9 +6,12 @@ data
 tensorboard_dir
 trajectory-data/
 test*
+!unittestcases/test*
 *.bak*
 *.png
 *.swp
 pics
 *.csv
 *.xlsx
+# Ignore dynaconf secret files
+.secrets.*

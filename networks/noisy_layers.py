@@ -70,6 +70,12 @@ class NoisyLayer(nn.Module):
 
     @cached_property_with_ttl(ttl=30)
     def param_range_dict(self) -> dict:
+        return self.calc_param_range_dict()
+
+    def refresh_param_range_dict(self):
+        self.param_range_dict = self.calc_param_range_dict()
+
+    def calc_param_range_dict(self) -> dict:
         epsilon = 1e-8
         range_dict = {}
         if not self.use_range:
@@ -361,6 +367,7 @@ class NoisyBN(NoisyLayer, nn.BatchNorm2d):
                 self.register_buffer("w_eff", w_eff)
             else:
                 self.w_eff = w_eff
+            self.refresh_param_range_dict()
             self.apply_perturbation(**self.get_perturbation())
 
     def forward(self, input):
@@ -374,6 +381,7 @@ class NoisyBN(NoisyLayer, nn.BatchNorm2d):
             self.w_eff = (self.weight / torch.sqrt(bn_var + self.eps)).view(self.num_features,1,1,1)
             
             if self.noisy and (self.sigma or self.mu) and self.training:
+                self.refresh_param_range_dict()  # refresh aggressively for BN
                 perturbation_dict = self.get_perturbation()
                 perturbed_w_eff = self.w_eff + perturbation_dict["w_eff"] if self.w_eff is not None else None
                 perturbed_b_eff = self.b_eff + perturbation_dict["b_eff"] if self.b_eff is not None else None
@@ -465,19 +473,21 @@ class NoisyBNUnrolled(NoisyBN):
             return output
 
 def set_noisy(m, noisy=True):
-    if isinstance(m, NoisyConv2d) or isinstance(m, NoisyLinear) or isinstance(m, NoisyIdentity) or isinstance(m, NoisyBN):
+    if isinstance(m, NoisyLayer):
         m.noisy = noisy
+    # if isinstance(m, NoisyConv2d) or isinstance(m, NoisyLinear) or isinstance(m, NoisyIdentity) or isinstance(m, NoisyBN):
+        # m.noisy = noisy
 
 def set_clean(m):
-    if isinstance(m, NoisyConv2d) or isinstance(m, NoisyLinear) or isinstance(m, NoisyIdentity) or isinstance(m, NoisyBN):
+    if isinstance(m, NoisyLayer):
         m.noisy = False
 
 def set_gaussian_noise(m):
-    if isinstance(m, NoisyConv2d) or isinstance(m, NoisyLinear):
+    if isinstance(m, NoisyLayer):
         m.noise_type = 'gaussian'
 
 def set_uniform_noise(m):
-    if isinstance(m, NoisyConv2d) or isinstance(m, NoisyLinear):
+    if isinstance(m, NoisyLayer):
         m.noise_type = 'uniform'
 
 def set_noise_type(m, noise_type):
@@ -487,7 +497,7 @@ def set_noise_type(m, noise_type):
         set_uniform_noise(m)
 
 def set_fixtest(m):
-    if isinstance(m, NoisyConv2d) or isinstance(m, NoisyLinear) or isinstance(m, NoisyBN):
+    if isinstance(m, NoisyLayer):
         m.fixtest_flag = True
 
 def set_noisyid_fix(m):

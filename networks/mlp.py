@@ -17,9 +17,9 @@ class MLP(nn.Module):
         for in_size, out_size in zip(layer_sizes[:-1], layer_sizes[1:]):
             layers.append(NoisyLinear(in_size, out_size, bias=True))
             layers.append(nn.ReLU(inplace=True))
-            layers.append(get_activation_quant(activation_quant_levels, enable=False))
+            # layers.append(get_activation_quant(activation_quant_levels, enable=False))
         layers.append(NoisyLinear(hidden_layer_sizes[-1], num_classes))
-        layers.append(get_activation_quant(activation_quant_levels, enable=False))
+        # layers.append(get_activation_quant(activation_quant_levels, enable=False))
 
         self.model = nn.Sequential(*layers)
         self.set_sigma_list(sigma_list)
