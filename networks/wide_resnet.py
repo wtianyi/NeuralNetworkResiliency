@@ -1,7 +1,6 @@
 import sys
 # TODO: move this along with the set_mu_list and set_sigma_list to NoisyModule base class
 from itertools import cycle
-from numbers import Real
 from typing import Iterable, Union
 
 import numpy as np
@@ -148,7 +147,7 @@ class WideResNet(nn.Module):
         for quant in children_of_class(self, CustomFakeQuantize):
             quant.set_qmin_qmax(0, quantization_levels - 1)
 
-    def set_mu_list(self, mu_list: Iterable) -> None:
+    def set_mu_list(self, mu_list: Union[Iterable, float, None]) -> None:
         noisy_layer_list = list(children_of_class(self, NoisyLayer))
 
         if mu_list is None:
@@ -162,7 +161,7 @@ class WideResNet(nn.Module):
         for l, m in zip(noisy_layer_list, cycle(mu_list)):
             l.mu = m
 
-    def set_sigma_list(self, sigma_list: Union[Iterable, Real]) -> None:
+    def set_sigma_list(self, sigma_list: Union[Iterable, float, None]) -> None:
         noisy_layer_list = list(children_of_class(self, NoisyLayer))
 
         if sigma_list is None:
