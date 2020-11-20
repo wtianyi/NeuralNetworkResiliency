@@ -1,11 +1,6 @@
 from typing import Tuple
 from networks import *
-import config as cf
-import torchvision
-import torchvision.transforms as transforms
 import torch
-from torch.utils.data import Dataset, TensorDataset
-import sys
 import os
 import shutil
 import numpy as np
@@ -34,109 +29,6 @@ def set_random_seed(seed: int, using_cuda: bool = False) -> None:
         # Deterministic operations for CuDNN, it may impact performances
         torch.backends.cudnn.deterministic = True
         # torch.backends.cudnn.benchmark = False
-
-
-def get_morse_datasets(mat_path: str) -> Tuple[Dataset, Dataset, int]:
-    from scipy.io import matlab
-
-    data = matlab.loadmat(mat_path)
-    x = torch.from_numpy(data["images"].T.astype("float32"))
-    y = torch.from_numpy(data["labels"].astype("int").ravel())
-    x_test = torch.from_numpy(data["t_images"].T.astype("float32"))
-    y_test = torch.from_numpy(data["t_labels"].astype("int").ravel())
-
-    num_classes = torch.unique(y).nelement()
-
-    train_set = TensorDataset(x, y)
-    test_set = TensorDataset(x_test, y_test)
-
-    return train_set, test_set, num_classes
-
-
-def get_datasets(dataset: str) -> Tuple[Dataset, Dataset, int]:
-    """
-    Get train and test datasets by dataset name
-    choices are 'morse', 'mnist', 'cifar10', 'cifar100'
-
-    Args:
-        dataset (:obj:`str`):
-            The dataset name
-
-    Return:
-        trainset (:obj:`torch.utils.data.Dataset`):
-            The training dataset
-        testset (:obj:`torch.utils.data.Dataset`):
-            The test dataset
-        num_classes (:obj:`int`):
-            The number of classes in the dataset
-    """
-    if dataset == "morse":
-        print("| Preparing Morse dataset...")
-        sys.stdout.write("| ")
-        return get_morse_datasets("./data/Morse_trainning_set.mat")
-    transform_train_CIFAR = transforms.Compose(
-        [
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
-        ]
-    )  # meanstd transformation
-
-    transform_train_MNIST = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
-        ]
-    )  # meanstd transformation
-
-    transform_test_CIFAR = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
-        ]
-    )
-
-    transform_test_MNIST = transforms.Compose(
-        [
-            # transforms.Pad(padding=2, fill=0),
-            transforms.ToTensor(),
-            transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
-        ]
-    )
-    if dataset == "cifar10":
-        print("| Preparing CIFAR-10 dataset...")
-        sys.stdout.write("| ")
-        trainset = torchvision.datasets.CIFAR10(
-            root="./data", train=True, download=True, transform=transform_train_CIFAR
-        )
-        testset = torchvision.datasets.CIFAR10(
-            root="./data", train=False, download=True, transform=transform_test_CIFAR
-        )
-        num_classes = 10
-    elif dataset == "cifar100":
-        print("| Preparing CIFAR-100 dataset...")
-        sys.stdout.write("| ")
-        trainset = torchvision.datasets.CIFAR100(
-            root="./data", train=True, download=True, transform=transform_train_CIFAR
-        )
-        testset = torchvision.datasets.CIFAR100(
-            root="./data", train=False, download=True, transform=transform_test_CIFAR
-        )
-        num_classes = 100
-    elif dataset == "mnist":
-        print("| Preparing MNIST dataset...")
-        sys.stdout.write("| ")
-        trainset = torchvision.datasets.MNIST(
-            root="./data", train=True, download=True, transform=transform_train_MNIST
-        )
-        testset = torchvision.datasets.MNIST(
-            root="./data", train=False, download=True, transform=transform_test_MNIST
-        )
-        num_classes = 10
-    else:
-        raise ValueError(f"Unrecognized dataset ({dataset})")
-    return trainset, testset, num_classes
 
 
 def get_network_name(args):
@@ -286,3 +178,38 @@ def get_hms(seconds):
     h, m = divmod(m, 60)
 
     return h, m, s
+
+
+def accuracy(output: torch.Tensor, target: torch.Tensor, topk=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    maxk = max(topk)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].float().sum()
+        res.append(correct_k.mul_(1.0 / batch_size))
+    return res
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count

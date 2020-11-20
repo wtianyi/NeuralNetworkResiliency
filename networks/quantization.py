@@ -4,7 +4,7 @@
 from typing import OrderedDict, Set, Type
 import torch
 from torch.nn.modules.module import _IncompatibleKeys
-from torch.quantization import *
+from torch.quantization.default_mappings import DEFAULT_QCONFIG_PROPAGATE_ALLOWED_LIST # DEFAULT_QCONFIG_PROPAGATE_WHITE_LIST
 import torch.nn.intrinsic as nni
 import torch.nn.intrinsic.quantized as nniq
 import torch.nn.intrinsic.qat as nniqat
@@ -74,7 +74,7 @@ def get_qconfig(nlevel_weight: int, nlevel_activation: int) -> QConfig:
         quant_min=0, quant_max=nlevel_activation-1, reduce_range=False, dtype=torch.qint32
     )
     if nlevel_weight is None:
-        def weight_observer(): return None
+        weight_observer = lambda: None
     else:
         weight_observer = CustomMinMaxObserver.with_args(
             quant_min=0, quant_max=nlevel_weight-1,  # dtype=torch.qint8,
@@ -114,7 +114,7 @@ CUSTOM_MODULE_MAPPING = {
     # QAT modules:
     nnqat.Linear: nnq.Linear,
     nnqat.Conv2d: nnq.Conv2d,
-    nnqat.Hardswish: nnq.Hardswish,
+    # nnqat.Hardswish: nnq.Hardswish,
     # Noisy modules:
     NoisyLinear: mynnq.Linear,
     NoisyConv2d: mynnq.Conv2d,
@@ -123,11 +123,11 @@ CUSTOM_MODULE_MAPPING = {
     # CustomFakeQuantize: nn.Identity,
 }
 
-CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST = (DEFAULT_QCONFIG_PROPAGATE_WHITE_LIST | set(CUSTOM_MODULE_MAPPING.keys()))
+CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST = (DEFAULT_QCONFIG_PROPAGATE_ALLOWED_LIST | set(CUSTOM_MODULE_MAPPING.keys()))
 
 
 def apply_quant_profile(
-    quant_levels_dict: OrderedDict[str, Tuple[int, int]],
+    quant_levels_dict,
     net: torch.nn.Module,
     swappable_module_list: Set[Type] = CUSTOM_MODULE_MAPPING,
     strict: bool = False

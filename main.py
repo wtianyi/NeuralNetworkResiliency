@@ -13,6 +13,7 @@ import random
 
 from networks import *
 from utils import *
+from datasets import get_dataloader
 from training_functions import *
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
@@ -164,6 +165,12 @@ parser.add_argument(
     default=None,
 )
 
+parser.add_argument(
+    "--deficit_epochs",
+    type=int,
+    default=0,
+    help="The number of initial epochs of deficit training",
+)
 # parser.add_argument('--test_with_std', action='store_true', help="fix mean, change std while testing")
 # parser.add_argument('--test_with_mean', action='store_true', help="fix std, change mean while testing")
 
@@ -253,13 +260,12 @@ start_epoch, num_epochs, batch_size, optim_type = (
     args.optim_type,
 )
 
-trainset, testset, num_classes = get_datasets(args.dataset)
-
-trainloader = torch.utils.data.DataLoader(
-    trainset, batch_size=batch_size, shuffle=True, num_workers=0
-)
-testloader = torch.utils.data.DataLoader(
-    testset, batch_size=100, shuffle=False, num_workers=0
+trainloader, testloader, num_classes = get_dataloader(
+    args.dataset,
+    batch_size=args.batch_size,
+    shuffle=True,
+    num_workers=0,
+    pin_memory=True,
 )
 
 #####################################################
@@ -321,7 +327,7 @@ def train(
             loss.backward()
 
         for p in net.parameters():
-            p.grad.data.mul_(1 / args.forward_sample)
+            p.grad.data.mul_(1 / args.forward_samples)
 
         optimizer.step()
         if trajectory_logger is not None:
@@ -340,7 +346,7 @@ def train(
                 epoch,
                 num_epochs,
                 batch_idx + 1,
-                int(np.ceil(len(trainset) / batch_size)),
+                int(np.ceil(len(trainloader.dataset) / batch_size)),
                 train_loss.avg,
                 acc.avg,
             )
@@ -582,7 +588,10 @@ if args.trajectory_dir is not None:
 else:
     trajectory_logger = None
 
+trainloader.impair()
 for epoch in range(start_epoch, start_epoch + num_epochs):
+    if epoch >= args.deficit_epochs:
+        trainloader.cure()
     start_time = time.time()
     # train
     if args.optim_type == "SGD":
