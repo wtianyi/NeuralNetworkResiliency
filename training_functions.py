@@ -75,7 +75,7 @@ def quantize_network(
     net.eval()
     device = next(net.parameters()).device
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(calibration_dataloader):
+        for inputs, _ in calibration_dataloader:
             inputs = inputs.to(device=device)
             # targets = targets.to(device=device)
             outputs = net(inputs)
