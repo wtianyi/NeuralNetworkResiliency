@@ -2,6 +2,7 @@ from typing import Tuple
 from . import mnist
 from . import cifar10
 from . import cifar100
+from . import morse
 from torch.utils.data import DataLoader
 import sys
 
@@ -9,6 +10,14 @@ helper_dict = {
     "mnist": mnist.get_dataloader_helper,
     "cifar10": cifar10.get_dataloader_helper,
     "cifar100": cifar100.get_dataloader_helper,
+    "morse": morse.get_dataloader_helper
+}
+
+meta_dict = {
+    "mnist": mnist.meta,
+    "cifar10": cifar10.meta,
+    "cifar100": cifar100.meta,
+    "morse": morse.meta
 }
 
 
@@ -34,3 +43,6 @@ def get_dataloader(dataset: str, **kwargs) -> Tuple[DataLoader, DataLoader, int]
     print(f"| Preparing {dataset} dataset...")
     sys.stdout.write("| ")
     return helper_dict[dataset](**kwargs)
+
+def get_meta(dataset: str) -> dict:
+    return meta_dict[dataset]
