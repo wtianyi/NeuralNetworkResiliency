@@ -1,6 +1,7 @@
 from typing import Tuple
 from torch.utils.data import TensorDataset, DataLoader
 
+meta = {}
 mat_path = "./data/Morse_trainning_set.mat"
 
 def get_dataloader_helper(**kwargs) -> Tuple[DataLoader, DataLoader, int]:

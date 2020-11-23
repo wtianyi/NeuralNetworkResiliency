@@ -4,6 +4,7 @@ import torchvision.transforms as transforms
 
 mean = (0.1307,)
 std = (0.3081,)
+meta = {}
 
 _transform_train_MNIST = transforms.Compose(
     [

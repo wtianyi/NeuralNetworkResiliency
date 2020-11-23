@@ -1,9 +1,16 @@
 from torch.utils.data.dataloader import DataLoader
 from torchvision.datasets import CIFAR100
 import torchvision.transforms as transforms
+import os
+import pickle
 
 mean = (0.5071, 0.4867, 0.4408)
 std = (0.2675, 0.2565, 0.2761)
+
+with open(
+    os.path.join("data", CIFAR100.base_folder, CIFAR100.meta["filename"]), "rb"
+) as f:
+    meta = pickle.load(f)
 
 _transform_train_CIFAR = transforms.Compose(
     [

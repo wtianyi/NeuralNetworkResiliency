@@ -13,6 +13,13 @@ helper_dict = {
     "morse": morse.get_dataloader_helper,
 }
 
+meta_dict = {
+    "mnist": mnist.meta,
+    "cifar10": cifar10.meta,
+    "cifar100": cifar100.meta,
+    "morse": morse.meta
+}
+
 
 def get_dataloader(dataset: str, **kwargs) -> Tuple[DataLoader, DataLoader, int]:
     """
@@ -37,3 +44,6 @@ def get_dataloader(dataset: str, **kwargs) -> Tuple[DataLoader, DataLoader, int]
     print(f"| Preparing {dataset} dataset...")
     sys.stdout.write("| ")
     return helper_dict[dataset](**kwargs)
+
+def get_meta(dataset: str) -> dict:
+    return meta_dict[dataset]
