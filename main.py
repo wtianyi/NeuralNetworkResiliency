@@ -13,10 +13,11 @@ import random
 
 from networks import *
 from utils import *
-from datasets import get_dataloader
+import datasets
 from training_functions import *
 from torch.nn.utils import clip_grad_norm_
-from torch.utils.tensorboard import SummaryWriter
+
+import wandb
 
 import numpy as np
 import json
@@ -203,6 +204,7 @@ if __name__ != "__main__":
     sys.exit(1)
 
 args = parser.parse_args()
+wandb.init(config=args)
 
 # FIXME: this is assuming that `args.training_noise` always has only one element, and that `args.testing_noise` is a list of scalars
 # FIXME: this is assuming that `args.training_noise_mean` always has only one element, and that `args.testing_noise_mean` is a list of scalars
@@ -260,13 +262,20 @@ start_epoch, num_epochs, batch_size, optim_type = (
     args.optim_type,
 )
 
-trainloader, testloader, num_classes = get_dataloader(
+trainloader, testloader, num_classes = datasets.get_dataloader(
     args.dataset,
     batch_size=args.batch_size,
     shuffle=True,
-    num_workers=0,
+    num_workers=10,
     pin_memory=True,
 )
+dataset_meta = datasets.get_meta(args.dataset)
+if "label_names" in dataset_meta:
+    class_names = dataset_meta["label_names"]
+elif "fine_label_names" in dataset_meta:
+    class_names = dataset_meta["fine_label_names"]
+else:
+    class_names = [str(i) for i in range(num_classes)]
 
 #####################################################
 print("\n[Phase 2] : Model setup")
@@ -299,7 +308,6 @@ def train(
     net,
     epoch,
     optimizer,
-    tensorboard_writer=None,
     clipper=None,
     trajectory_logger: TrajectoryLogger = None,
 ):
@@ -307,9 +315,11 @@ def train(
     net.apply(set_noisy)
 
     train_loss, acc, acc5 = AverageMeter(), AverageMeter(), AverageMeter()
+    class_acc = AverageMeter()
 
     print("\n=> Training Epoch #%d, LR=%.4f" % (epoch, optimizer.param_groups[0]["lr"]))
 
+    global_step = epoch * len(trainloader)
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         global_step = epoch * len(trainloader) + batch_idx
         if use_cuda:
@@ -337,8 +347,10 @@ def train(
 
         optimizer.step()  # Optimizer update
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
+        class_acc_, class_counts_ = classwise_accuracy(outputs, targets, num_classes, 1)
         acc.update(prec1, targets.size(0))
         acc5.update(prec5, targets.size(0))
+        class_acc.update(class_acc_, class_counts_)
 
         sys.stdout.write("\r")
         sys.stdout.write(
@@ -353,15 +365,21 @@ def train(
         )
         sys.stdout.flush()
 
-        if type(tensorboard_writer) is SummaryWriter:
-            tensorboard_writer.add_scalar(
-                "train_loss", loss.item(), global_step=global_step
-            )
-            tensorboard_writer.add_scalar("train_acc", prec1, global_step=global_step)
-            tensorboard_writer.add_scalar(
-                "train_top5_acc", prec5, global_step=global_step
-            )
-            tensorboard_writer.flush()
+        wandb.log(
+            {
+                "epoch": epoch,
+                "loss": loss.item(),
+                "train_acc": prec1,
+                "train_top5_acc": prec5,
+                "data_state": getattr(trainloader, "state", None),
+                # "examples": [wandb.Image(inputs[0].detach().cpu().numpy().transpose([1,2,0]), caption="Input Sample")]
+            },
+            step=global_step,
+        )
+    wandb.log(
+        {f"prec/{class_name}": p for class_name, p in zip(class_names, class_acc.avg)},
+        step=global_step,
+    )
 
     return acc.avg, acc5.avg, train_loss.avg
 
@@ -568,13 +586,6 @@ scheduler = optim.lr_scheduler.StepLR(
 )
 
 writer = None
-if args.tensorboard:
-    now = datetime.datetime.now()
-    log_identifier = file_name + "_" + now.strftime("%Y%m%d-%H%M%S")
-    log_dir = os.path.join("tensorboard_dir/new_BN", log_identifier)
-    writer = SummaryWriter(log_dir=log_dir)
-    print("| Tensorboard record: " + log_identifier)
-    writer.add_text("run-args", args.__repr__(), global_step=None, walltime=None)
 
 best_acc_1 = 0
 best_acc_2 = 0
@@ -588,6 +599,7 @@ if args.trajectory_dir is not None:
 else:
     trajectory_logger = None
 
+wandb.watch(net, criterion, log="all", log_freq=1000)
 trainloader.impair()
 for epoch in range(start_epoch, start_epoch + num_epochs):
     if epoch >= args.deficit_epochs:
@@ -675,8 +687,6 @@ for epoch in range(start_epoch, start_epoch + num_epochs):
     epoch_time = time.time() - start_time
     elapsed_time += epoch_time
     print("| Elapsed time : %d:%02d:%02d" % (get_hms(elapsed_time)))
-    if type(writer) is SummaryWriter:
-        writer.flush()
 
 print("\n[Phase 4] : Testing model")
 print("* Test results : Acc@1 = {:.2%}".format(best_acc_1))
