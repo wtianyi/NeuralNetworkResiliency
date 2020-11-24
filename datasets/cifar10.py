@@ -41,6 +41,14 @@ _transform_test_CIFAR = transforms.Compose(
     ]
 )
 
+_transform_test_CIFAR_deficit = transforms.Compose(
+    [
+        transforms.Resize([8, 8]),
+        transforms.Resize([32, 32]),
+        transforms.ToTensor(),
+        # transforms.Normalize(cf.mean[dataset], cf.std[dataset]),
+    ]
+)
 
 def get_dataloader_helper(**kwargs):
     trainset = CIFAR10(
@@ -55,8 +63,11 @@ def get_dataloader_helper(**kwargs):
     testset = CIFAR10(
         root="./data", train=False, download=True, transform=_transform_test_CIFAR
     )
+    deficit_testset = CIFAR10(
+        root="./data", train=False, download=True, transform=_transform_test_CIFAR_deficit
+    )
     num_classes = 10
 
     train_loader = DeficitDataLoader(trainset, deficit_trainset, **kwargs)
-    test_loader = DataLoader(testset, **kwargs)
+    test_loader = DeficitDataLoader(testset, deficit_testset, **kwargs)
     return train_loader, test_loader, num_classes

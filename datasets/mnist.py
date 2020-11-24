@@ -27,6 +27,14 @@ _transform_test_MNIST = transforms.Compose(
         # transforms.Normalize(mean, std),
     ]
 )
+_transform_test_MNIST_deficit = transforms.Compose(
+    [
+        transforms.Resize([7, 7]),
+        transforms.Resize([28, 28]),
+        transforms.ToTensor(),
+        # transforms.Normalize(mean, std),
+    ]
+)
 
 
 def get_dataloader_helper(**kwargs):
@@ -42,15 +50,12 @@ def get_dataloader_helper(**kwargs):
     testset = MNIST(
         root="./data", train=False, download=True, transform=_transform_test_MNIST
     )
+    deficit_testset = MNIST(
+        root="./data", train=False, download=True, transform=_transform_test_MNIST_deficit
+    )
     num_classes = 10
 
-    train_loader = DeficitDataLoader(
-        trainset,
-        deficit_trainset,
-        **kwargs
-    )
+    train_loader = DeficitDataLoader(trainset, deficit_trainset, **kwargs)
+    test_loader = DeficitDataLoader(testset, deficit_testset, **kwargs)
 
-    test_loader = DataLoader(
-        testset, **kwargs
-    )
     return train_loader, test_loader, num_classes
