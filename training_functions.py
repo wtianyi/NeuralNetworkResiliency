@@ -2,12 +2,19 @@ import torch
 import torch.quantization
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
-from networks import set_gaussian_noise, set_uniform_noise, set_fixtest, disable_observer, disable_fake_quant, get_qconfig, CUSTOM_MODULE_MAPPING, CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST, children_of_class, NoisyLayer, CustomFakeQuantize
+from torch.utils.data import DataLoader
+from networks import set_gaussian_noise, set_uniform_noise, set_clean, set_noisy, set_fixtest, disable_observer, disable_fake_quant, get_qconfig, CUSTOM_MODULE_MAPPING, CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST, children_of_class, NoisyLayer, CustomFakeQuantize
 import pandas as pd
 import numpy as np
 import argparse
-from typing import Union, Iterable
+from typing import List, Union, Iterable, Callable
+import os, sys
+from utils import create_dir, AverageMeter, accuracy, classwise_accuracy
+import pandas as pd
+from trajectory import TrajectoryLogger, TrajectoryLog
+from itertools import product
 
+import wandb
 
 def prepare_network_perturbation(
         net, noise_type: str = 'gaussian', fixtest: bool = False,
@@ -69,7 +76,7 @@ def quantize_network(
         disable_fake_quant(activation_quant)
     torch.quantization.prepare(
         net, inplace=True,
-        white_list=CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST
+        allow_list=CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST
     )
     # Calibrate with the given set
     net.eval()
@@ -166,3 +173,227 @@ class Clipper(dict):  # inherit dict to be serializable
             msg = "Required format: <init_max_norm>[:<decay_factor>:<decay_interval>[:<max_decay_count>]]"
             raise argparse.ArgumentTypeError(msg)
         return clipper
+
+# class_names, trainloader, testloader, device, forward_samples,
+#
+# print("\n=> Training Epoch #%d, LR=%.4f" % (epoch, optimizer.param_groups[0]["lr"]))
+def get_train_test_functions(
+    train_loader: DataLoader,
+    test_loader: DataLoader,
+    criterion,
+    class_names: List[str],
+    device,
+):
+    epoch = 0
+    global_step = 0
+    num_classes = len(class_names)
+
+    def train(
+        net: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        forward_samples: int,
+        clipper: Clipper = None,
+        trajectory_logger: TrajectoryLogger = None,
+    ):
+        nonlocal global_step, epoch
+        net.train()
+        net.apply(set_noisy)
+
+        train_loss, acc, acc5 = AverageMeter(), AverageMeter(), AverageMeter()
+        class_acc = AverageMeter()
+
+        for batch_idx, (inputs, targets) in enumerate(train_loader):
+            inputs, targets = (
+                inputs.to(device),
+                targets.to(device),
+            )  # GPU settings
+
+            optimizer.zero_grad()
+            for _ in range(forward_samples):
+                outputs = net(inputs)
+                loss = criterion(outputs, targets)
+                train_loss.update(loss.item(), inputs.size(0))
+                loss.backward()
+
+            for p in net.parameters():
+                p.grad.data.mul_(1 / forward_samples)
+
+            optimizer.step()
+            if trajectory_logger is not None:
+                trajectory_logger.add_param_log(net, global_step)
+                trajectory_logger.add_grad_log(net, global_step)
+                trajectory_logger.commit()
+
+            optimizer.step()  # Optimizer update
+            prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
+            class_acc_, class_counts_ = classwise_accuracy(
+                outputs, targets, num_classes, 1
+            )
+            acc.update(prec1, targets.size(0))
+            acc5.update(prec5, targets.size(0))
+            class_acc.update(class_acc_, class_counts_)
+
+            sys.stdout.write("\r")
+            sys.stdout.write(
+                "| Iter[{:3d}/{:3d}]\t\tLoss: {:.4f} Acc@1: {:.3%}".format(
+                    batch_idx + 1, len(train_loader), train_loss.avg, acc.avg,
+                )
+            )
+            sys.stdout.flush()
+
+            wandb.log(
+                {
+                    "epoch": epoch,
+                    "loss": loss.item(),
+                    "train_acc": prec1,
+                    "train_top5_acc": prec5,
+                    "data_state": getattr(train_loader, "state", None),
+                    # "examples": [wandb.Image(inputs[0].detach().cpu().numpy().transpose([1,2,0]), caption="Input Sample")]
+                },
+                step=global_step,
+            )
+            global_step += 1
+
+        wandb.log(
+            {
+                f"prec/{class_name}": p
+                for class_name, p in zip(class_names, class_acc.avg)
+            },
+            step=global_step,
+        )
+        epoch += 1
+        return acc.avg, acc5.avg, train_loss.avg
+
+    def test(net, dataloader):
+        net.eval()
+        test_loss, acc, acc5 = AverageMeter(), AverageMeter(), AverageMeter()
+        with torch.no_grad():
+            for inputs, targets in dataloader:
+                inputs, targets = (
+                    inputs.to(device),
+                    targets.to(device),
+                )
+                outputs = net(inputs)
+                loss = criterion(outputs, targets)
+                test_loss.update(loss.item(), targets.size(0))
+                prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
+                acc.update(prec1, targets.size(0))
+                acc5.update(prec5, targets.size(0))
+
+        print(
+            "\n| Validation Epoch #{:d}\t\t\tLoss: {:.4f} Acc@1: {:.2%}".format(
+                epoch, loss.item(), acc.avg
+            )
+        )
+
+        return acc.avg, acc5.avg
+
+    def test_with_std_mean(
+        network_constructor: Callable,
+        checkpoint,
+        noise_type="gaussian",
+        test_mean_list=[None],
+        test_std_list=[None],
+        test_quantization_levels=[None],
+        quantize_weights: bool = False,
+        deficit_list = [None],
+        sample_num: int = 1,
+    ):
+        if test_std_list is None:
+            test_std_list = [None]
+        if test_mean_list is None:
+            test_mean_list = [None]
+        if test_quantization_levels is None:
+            test_quantization_levels = [None]
+        results = []
+        for stdev, mean, quant_levels, deficit in product(
+            test_std_list,
+            test_mean_list,
+            test_quantization_levels,
+            deficit_list
+        ):
+            if deficit is True:
+                test_loader.impair()
+            elif deficit is False:
+                test_loader.cure()
+            def prepare_and_test():
+                net = network_constructor()
+                net.load_state_dict(checkpoint["state_dict"], strict=False)
+                net.to(device)
+                net.eval()
+                net.apply(set_noisy)
+                prepare_network_perturbation(
+                    net=net,
+                    noise_type=noise_type,
+                    fixtest=True,
+                    perturbation_level=stdev,
+                    perturbation_mean=mean,
+                )
+                if quantize_weights:
+                    quantize_network(
+                        net=net,
+                        num_weight_quant_levels=quant_levels,
+                        num_activation_quant_levels=quant_levels,
+                        calibration_dataloader=train_loader,
+                    )
+                else:
+                    prepare_network_quantization(
+                        net=net,
+                        num_quantization_levels=quant_levels,
+                        calibration_dataloader=train_loader,
+                        qat=False,
+                    )
+                test_acc, test_acc_5 = test(net, test_loader)
+                return test_acc.cpu().item(), test_acc_5.cpu().item()
+
+            print(
+                f"| test noise stdev: {stdev}, test noise mean: {mean},"
+                f" test quant levels: {quant_levels}"
+            )
+            acc_tuple_list = [prepare_and_test() for _ in range(sample_num)]
+            test_acc_list, test_acc5_list = zip(*acc_tuple_list)
+            results.append(
+                {
+                    "stdev": stdev,
+                    "mean": mean,
+                    "quant_levels": quant_levels,
+                    "data_state": test_loader.state,
+                    "test_acc": test_acc_list,
+                    "test_acc5": test_acc5_list,
+                }
+            )
+        df = pd.DataFrame(results)
+        df["test_acc_avg"] = df["test_acc"].apply(np.mean)
+        df["test_acc5_avg"] = df["test_acc5"].apply(np.mean)
+        df = df.fillna(0)
+        test_table = wandb.Table(dataframe=df)
+        wandb.log({"test_table": test_table}, step=global_step)
+        return df
+
+    return train, test_with_std_mean
+
+
+def save_model(
+    net: nn.Module,
+    save_point: str,
+    file_name: str,
+    args,
+    metric=1,
+    stats_dict: dict = None,
+):
+    state = {"state_dict": net.state_dict(), "args": args}
+    if stats_dict is not None:
+        state.update(stats_dict)
+    create_dir(save_point)
+    if metric == 1:
+        save_file = os.path.join(save_point, file_name + "_metric1.pkl")
+        torch.save(state, save_file)
+        print(f"| Saved Best model to \n{save_file}\nstats = {stats_dict}")
+    elif metric == 2:
+        save_file = os.path.join(save_point, file_name + "_metric2.pkl")
+        torch.save(state, save_file)
+        print(f"| Saved Best model to \n{save_file}\nstats = {stats_dict}")
+
+    save_file = os.path.join(save_point, file_name + "_current.pkl")
+    torch.save(state, save_file)
+    print(f"| Saved Current model to \n {save_file}")
