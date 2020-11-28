@@ -85,8 +85,8 @@ def _get_network(
             net = ResNet(
                 depth,
                 num_classes,
-                use_dropout=True,
-                dropout_rate=dropout_rate,
+                use_dropout=False,
+                # dropout_rate=dropout_rate,
                 in_channel=1,
             )
         else:

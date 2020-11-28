@@ -207,6 +207,7 @@ def get_train_test_functions(
                 inputs.to(device),
                 targets.to(device),
             )  # GPU settings
+            batch_size = targets.size(0)
 
             optimizer.zero_grad()
             for _ in range(forward_samples):
@@ -229,8 +230,8 @@ def get_train_test_functions(
             class_acc_, class_counts_ = classwise_accuracy(
                 outputs, targets, num_classes, 1
             )
-            acc.update(prec1, targets.size(0))
-            acc5.update(prec5, targets.size(0))
+            acc.update(prec1, batch_size)
+            acc5.update(prec5, batch_size)
             class_acc.update(class_acc_, class_counts_)
 
             sys.stdout.write("\r")
@@ -252,7 +253,7 @@ def get_train_test_functions(
                 },
                 step=global_step,
             )
-            global_step += 1
+            global_step += batch_size
 
         wandb.log(
             {

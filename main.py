@@ -89,7 +89,7 @@ parser.add_argument(
 parser.add_argument(
     "--training_noise",
     type=float,
-    nargs="+",
+    # nargs="+",
     default=None,
     help="Set the training noise standard deviation",
 )
@@ -122,9 +122,6 @@ parser.add_argument(
 
 parser.add_argument(
     "--forward_samples", default=1, type=int, help="multi samples during forward"
-)
-parser.add_argument(
-    "--tensorboard", action="store_true", help="Turn on the tensorboard monitoring"
 )
 parser.add_argument(
     "--regularization_type",
@@ -202,20 +199,18 @@ if __name__ != "__main__":
 args = parser.parse_args()
 wandb.init(config=args)
 
-# FIXME: this is assuming that `args.training_noise` always has only one element, and that `args.testing_noise` is a list of scalars
+# FIXME: this is assuming that `args.training_noise` always is a scalar, and that `args.testing_noise` is a list of scalars
 # FIXME: this is assuming that `args.training_noise_mean` always has only one element, and that `args.testing_noise_mean` is a list of scalars
 
 if args.testing_noise is None:
     args.testing_noise = [None]
-if args.training_noise is None:
-    args.training_noise = [None]
 if args.training_noise_mean is None:
-    args.training_noise_mean = [None]
+    args.training_noise_mean = [0]
 if args.testing_noise_mean is None:
-    args.testing_noise_mean = [None]
+    args.testing_noise_mean = [0]
 
 if not args.testOnly:
-    args.testing_noise = list(set(args.testing_noise + [args.training_noise[0]]))
+    args.testing_noise = list(set(args.testing_noise + [args.training_noise]))
     args.testing_noise_mean = list(
         set(args.testing_noise_mean + [args.training_noise_mean[0]])
     )
@@ -262,7 +257,7 @@ trainloader, testloader, num_classes = datasets.get_dataloader(
     args.dataset,
     batch_size=args.batch_size,
     shuffle=True,
-    num_workers=10,
+    num_workers=2,
     pin_memory=True,
 )
 dataset_meta = datasets.get_meta(args.dataset)
@@ -278,7 +273,7 @@ print("\n[Phase 2] : Model setup")
 net, file_name = get_network(args, num_classes=num_classes)
 print("| Building net...")
 print(file_name)
-net.apply(conv_init)
+# net.apply(conv_init)
 criterion = nn.CrossEntropyLoss()
 
 if use_cuda:
@@ -364,9 +359,10 @@ optimizer = optim.SGD(
     weight_decay=args.regularization,
     nesterov=args.nesterov,
 )
-scheduler = optim.lr_scheduler.StepLR(
-    optimizer, step_size=args.epochs_lr_decay, gamma=args.lr_decay_rate
-)
+# scheduler = optim.lr_scheduler.StepLR(
+#     optimizer, step_size=args.epochs_lr_decay, gamma=args.lr_decay_rate
+# )
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
 writer = None
 
@@ -382,10 +378,14 @@ if args.trajectory_dir is not None:
 else:
     trajectory_logger = None
 
-wandb.watch(net, criterion, log="all", log_freq=1000)
+# wandb.watch(net, criterion, log="all", log_freq=1000)
 trainloader.impair()
 for epoch in range(num_epochs):
-    print("\n=> Training Epoch #%d, LR=%.4f" % (epoch, optimizer.param_groups[0]["lr"]))
+    print(
+        "\n=> Training Epoch [{:3d}/{:3d}], LR={:.4f}".format(
+            epoch, num_epochs, optimizer.param_groups[0]["lr"]
+        )
+    )
     if epoch >= args.deficit_epochs:
         trainloader.cure()
     start_time = time.time()
@@ -400,10 +400,7 @@ for epoch in range(num_epochs):
         )
 
         train_acc, train_acc_5, train_loss = train(
-            net,
-            optimizer,
-            args.forward_samples,
-            trajectory_logger=trajectory_logger,
+            net, optimizer, args.forward_samples, trajectory_logger=trajectory_logger,
         )
         scheduler.step()
     elif args.optim_type == "EntropySGD":
@@ -430,7 +427,7 @@ for epoch in range(num_epochs):
         noise_type=args.testing_noise_type,
         test_mean_list=args.testing_noise_mean,
         test_std_list=args.testing_noise,
-        deficit_list = [True, False],
+        deficit_list=[True, False],
         sample_num=1,
     )
 
