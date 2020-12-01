@@ -249,6 +249,7 @@ def get_train_test_functions(
                     "train_acc": prec1,
                     "train_top5_acc": prec5,
                     "data_state": getattr(train_loader, "state", None),
+                    "learning_rate": optimizer.param_groups[0]["lr"]
                     # "examples": [wandb.Image(inputs[0].detach().cpu().numpy().transpose([1,2,0]), caption="Input Sample")]
                 },
                 step=global_step,
