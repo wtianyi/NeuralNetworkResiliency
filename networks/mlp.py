@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 
 from .network_utils import children_of_class
-from typing import Iterable
+from typing import Iterable, Union
 from itertools import cycle
 from .quantization import CustomFakeQuantize, get_activation_quant, enable_fake_quant, enable_observer, disable_fake_quant, disable_observer
 
@@ -28,7 +28,7 @@ class MLP(nn.Module):
     def forward(self, x):
         return(self.model(x))
 
-    def set_mu_list(self, mu_list: Iterable) -> None:
+    def set_mu_list(self, mu_list: Union[Iterable, float, None]) -> None:
         noisy_layer_list = list(children_of_class(self, NoisyLayer))
 
         if mu_list is None:
@@ -43,7 +43,7 @@ class MLP(nn.Module):
             l.mu = m
 
     # TODO: rewrite as `set_mu_list`
-    def set_sigma_list(self, sigma_list: Iterable) -> None:
+    def set_sigma_list(self, sigma_list: Union[Iterable, float, None]) -> None:
         """ Allow None, scalar, 1-length list or
         list with the length of the number of noisy layers
         """

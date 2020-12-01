@@ -50,6 +50,7 @@ def get_network_name(args):
     parts.append("lr-{}".format(args.lr))
     parts.append("epochs-{}".format(args.num_epochs))
     parts.append("lrdecayepoch-{}".format(args.epochs_lr_decay))
+    parts.append("deficitepoch-{}".format(args.deficit_epochs))
     if args.forward_samples != 1:
         parts.append("forward-{}".format(args.forward_samples))
     if args.optim_type == "EntropySGD":
@@ -84,8 +85,8 @@ def _get_network(
             net = ResNet(
                 depth,
                 num_classes,
-                use_dropout=True,
-                dropout_rate=dropout_rate,
+                use_dropout=False,
+                # dropout_rate=dropout_rate,
                 in_channel=1,
             )
         else:
@@ -194,6 +195,30 @@ def accuracy(output: torch.Tensor, target: torch.Tensor, topk=(1,)):
         correct_k = correct[:k].float().sum()
         res.append(correct_k.mul_(1.0 / batch_size))
     return res
+
+
+def classwise_accuracy(
+    output: torch.Tensor, target: torch.Tensor, num_classes: int = None, topk: int = 1,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Computes the precision@k for each class respectively
+
+    Args:
+        output (:obj:`torch.Tensor`): The logits or probs as the classifier output
+        target (:obj:`torch.Tensor`): The ground truth labels
+        num_classes (`int`): The number of classes
+        topk (`int`): The k to computer precision@k for
+
+    Returns:
+        accuracy (:obj:`torch.Tensor`): The accuracy, i.e. the precision@k for
+            each class
+        counts (:obj:`torch.Tensor`): The number of data points of each class
+    """
+    _, pred = output.topk(topk, dim=1, largest=True, sorted=True)
+    correct = pred.T.eq(target.view(-1)).sum(dim=0).bool()
+    counts = target.bincount(minlength=num_classes)
+    accuracy = target.bincount(weights=correct, minlength=num_classes) / counts
+    # classes = torch.arange(counts.size(0))
+    return accuracy, counts  # , classes
 
 
 class AverageMeter(object):

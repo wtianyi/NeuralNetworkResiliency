@@ -13,17 +13,14 @@ import random
 
 from networks import *
 from utils import *
-from datasets import get_dataloader
+import datasets
 from training_functions import *
 from torch.nn.utils import clip_grad_norm_
-from torch.utils.tensorboard import SummaryWriter
+
+import wandb
 
 import numpy as np
 import json
-
-from itertools import product
-import pandas as pd
-from trajectory import TrajectoryLogger, TrajectoryLog
 
 all_start_time = datetime.datetime.now()
 
@@ -92,7 +89,7 @@ parser.add_argument(
 parser.add_argument(
     "--training_noise",
     type=float,
-    nargs="+",
+    # nargs="+",
     default=None,
     help="Set the training noise standard deviation",
 )
@@ -125,9 +122,6 @@ parser.add_argument(
 
 parser.add_argument(
     "--forward_samples", default=1, type=int, help="multi samples during forward"
-)
-parser.add_argument(
-    "--tensorboard", action="store_true", help="Turn on the tensorboard monitoring"
 )
 parser.add_argument(
     "--regularization_type",
@@ -203,21 +197,20 @@ if __name__ != "__main__":
     sys.exit(1)
 
 args = parser.parse_args()
+wandb.init(config=args)
 
-# FIXME: this is assuming that `args.training_noise` always has only one element, and that `args.testing_noise` is a list of scalars
+# FIXME: this is assuming that `args.training_noise` always is a scalar, and that `args.testing_noise` is a list of scalars
 # FIXME: this is assuming that `args.training_noise_mean` always has only one element, and that `args.testing_noise_mean` is a list of scalars
 
 if args.testing_noise is None:
     args.testing_noise = [None]
-if args.training_noise is None:
-    args.training_noise = [None]
 if args.training_noise_mean is None:
-    args.training_noise_mean = [None]
+    args.training_noise_mean = [0]
 if args.testing_noise_mean is None:
-    args.testing_noise_mean = [None]
+    args.testing_noise_mean = [0]
 
 if not args.testOnly:
-    args.testing_noise = list(set(args.testing_noise + [args.training_noise[0]]))
+    args.testing_noise = list(set(args.testing_noise + [args.training_noise]))
     args.testing_noise_mean = list(
         set(args.testing_noise_mean + [args.training_noise_mean[0]])
     )
@@ -260,20 +253,27 @@ start_epoch, num_epochs, batch_size, optim_type = (
     args.optim_type,
 )
 
-trainloader, testloader, num_classes = get_dataloader(
+trainloader, testloader, num_classes = datasets.get_dataloader(
     args.dataset,
     batch_size=args.batch_size,
     shuffle=True,
-    num_workers=0,
+    num_workers=2,
     pin_memory=True,
 )
+dataset_meta = datasets.get_meta(args.dataset)
+if "label_names" in dataset_meta:
+    class_names = dataset_meta["label_names"]
+elif "fine_label_names" in dataset_meta:
+    class_names = dataset_meta["fine_label_names"]
+else:
+    class_names = [str(i) for i in range(num_classes)]
 
 #####################################################
 print("\n[Phase 2] : Model setup")
 net, file_name = get_network(args, num_classes=num_classes)
 print("| Building net...")
 print(file_name)
-net.apply(conv_init)
+# net.apply(conv_init)
 criterion = nn.CrossEntropyLoss()
 
 if use_cuda:
@@ -295,214 +295,9 @@ def network_constructor():
     return net
 
 
-def train(
-    net,
-    epoch,
-    optimizer,
-    tensorboard_writer=None,
-    clipper=None,
-    trajectory_logger: TrajectoryLogger = None,
-):
-    net.train()
-    net.apply(set_noisy)
-
-    train_loss, acc, acc5 = AverageMeter(), AverageMeter(), AverageMeter()
-
-    print("\n=> Training Epoch #%d, LR=%.4f" % (epoch, optimizer.param_groups[0]["lr"]))
-
-    for batch_idx, (inputs, targets) in enumerate(trainloader):
-        global_step = epoch * len(trainloader) + batch_idx
-        if use_cuda:
-            inputs, targets = (
-                inputs.cuda(device=device),
-                targets.cuda(device=device),
-            )  # GPU settings
-        inputs, targets = inputs, targets
-
-        optimizer.zero_grad()
-        for _ in range(args.forward_samples):
-            outputs = net(inputs)
-            loss = criterion(outputs, targets)
-            train_loss.update(loss.item(), inputs.size(0))
-            loss.backward()
-
-        for p in net.parameters():
-            p.grad.data.mul_(1 / args.forward_samples)
-
-        optimizer.step()
-        if trajectory_logger is not None:
-            trajectory_logger.add_param_log(net, global_step)
-            trajectory_logger.add_grad_log(net, global_step)
-            trajectory_logger.commit()
-
-        optimizer.step()  # Optimizer update
-        prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        acc.update(prec1, targets.size(0))
-        acc5.update(prec5, targets.size(0))
-
-        sys.stdout.write("\r")
-        sys.stdout.write(
-            "| Epoch [{:3d}/{:3d}] Iter[{:3d}/{:3d}]\t\tLoss: {:.4f} Acc@1: {:.3%}".format(
-                epoch,
-                num_epochs,
-                batch_idx + 1,
-                int(np.ceil(len(trainloader.dataset) / batch_size)),
-                train_loss.avg,
-                acc.avg,
-            )
-        )
-        sys.stdout.flush()
-
-        if type(tensorboard_writer) is SummaryWriter:
-            tensorboard_writer.add_scalar(
-                "train_loss", loss.item(), global_step=global_step
-            )
-            tensorboard_writer.add_scalar("train_acc", prec1, global_step=global_step)
-            tensorboard_writer.add_scalar(
-                "train_top5_acc", prec5, global_step=global_step
-            )
-            tensorboard_writer.flush()
-
-    return acc.avg, acc5.avg, train_loss.avg
-
-
-def test(net, epoch, dataloader):
-    net.eval()
-    test_loss, acc, acc5 = AverageMeter(), AverageMeter(), AverageMeter()
-    with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(dataloader):
-            if use_cuda:
-                inputs, targets = (
-                    inputs.cuda(device=device),
-                    targets.cuda(device=device),
-                )
-            outputs = net(inputs)
-            loss = criterion(outputs, targets)
-            test_loss.update(loss.item(), targets.size(0))
-            prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-            acc.update(prec1, targets.size(0))
-            acc5.update(prec5, targets.size(0))
-
-    print(
-        "\n| Validation Epoch #{:d}\t\t\tLoss: {:.4f} Acc@1: {:.2%}".format(
-            epoch, loss.item(), acc.avg
-        )
-    )
-
-    return acc.avg, acc5.avg
-
-
-def test_with_std_mean(
-    network_constructor: Callable,
-    checkpoint,
-    epoch=0,
-    test_mean_list=[None],
-    test_std_list=[None],
-    test_quantization_levels=[None],
-    quantize_weights: bool = False,
-    sample_num=1,
-    writer=None,
-):
-    if test_std_list is None:
-        test_std_list = [None]
-    if test_mean_list is None:
-        test_mean_list = [None]
-    if test_quantization_levels is None:
-        test_quantization_levels = [None]
-    results = []
-    for stdev, mean, quant_levels in product(
-        test_std_list, test_mean_list, test_quantization_levels
-    ):
-
-        def prepare_and_test():
-            net = network_constructor()
-            net.load_state_dict(checkpoint["state_dict"], strict=False)
-            if use_cuda:
-                net.to(device)
-            else:
-                net.to("cpu")
-            net.eval()
-            net.apply(set_noisy)
-            prepare_network_perturbation(
-                net=net,
-                noise_type=args.testing_noise_type,
-                fixtest=True,
-                perturbation_level=stdev,
-                perturbation_mean=mean,
-            )
-            if quantize_weights:
-                quantize_network(
-                    net=net,
-                    num_weight_quant_levels=quant_levels,
-                    num_activation_quant_levels=quant_levels,
-                    calibration_dataloader=trainloader,
-                )
-            else:
-                prepare_network_quantization(
-                    net=net,
-                    num_quantization_levels=quant_levels,
-                    calibration_dataloader=trainloader,
-                    qat=False,
-                )
-            test_acc, test_acc_5 = test(net, epoch, testloader)
-            if args.tensorboard and writer is not None:
-                # TODO: the proper value of the global_step?
-                writer.add_scalar(
-                    f"test_acc/{mean}",
-                    test_acc,
-                    global_step=(epoch + 1) * len(trainloader),
-                )
-                writer.add_scalar(
-                    f"test_top5_acc/{mean}",
-                    test_acc_5,
-                    global_step=(epoch + 1) * len(trainloader),
-                )
-            return test_acc.cpu().item(), test_acc_5.cpu().item()
-
-        print(
-            f"test noise stdev: {stdev}, test noise mean: {mean},"
-            f" test quant levels: {quant_levels}"
-        )
-        acc_tuple_list = [prepare_and_test() for i in range(sample_num)]
-        test_acc_list, test_acc5_list = zip(*acc_tuple_list)
-        results.append(
-            {
-                "stdev": stdev,
-                "mean": mean,
-                "quant_levels": quant_levels,
-                "test_acc": test_acc_list,
-                "test_acc5": test_acc5_list,
-            }
-        )
-    df = pd.DataFrame(results)
-    df["test_acc_avg"] = df["test_acc"].apply(np.mean)
-    df["test_acc5_avg"] = df["test_acc5"].apply(np.mean)
-    df = df.fillna(0)
-    return df
-
-
-def save_model(net, save_point, args, metric=1, stats_dict: dict = None):
-    state = {"state_dict": net.state_dict(), "args": args}
-    if stats_dict is not None:
-        state.update(stats_dict)
-    # if not os.path.isdir('checkpoint'):
-    #     os.mkdir('checkpoint')
-    # if not os.path.isdir(save_point):
-    #     os.mkdir(save_point)
-    create_dir(save_point)
-    if metric == 1:
-        save_file = os.path.join(save_point, file_name + "_metric1.pkl")
-        torch.save(state, save_file)
-        print(f"| Saved Best model to \n{save_file}\nstats = {stats_dict}")
-    elif metric == 2:
-        save_file = os.path.join(save_point, file_name + "_metric2.pkl")
-        torch.save(state, save_file)
-        print(f"| Saved Best model to \n{save_file}\nstats = {stats_dict}")
-
-    save_file = os.path.join(save_point, file_name + "_current.pkl")
-    torch.save(state, save_file)
-    print(f"| Saved Current model to \n {save_file}")
-
+train, test_with_std_mean = get_train_test_functions(
+    trainloader, testloader, criterion, class_names, device
+)
 
 #######################################################
 if args.testOnly:
@@ -529,6 +324,7 @@ if args.testOnly:
     test_acc_df = test_with_std_mean(
         network_constructor,
         checkpoint,
+        noise_type=args.testing_noise_type,
         test_mean_list=args.testing_noise_mean,
         test_std_list=args.testing_noise,
         test_quantization_levels=args.test_quantization_levels,
@@ -563,18 +359,12 @@ optimizer = optim.SGD(
     weight_decay=args.regularization,
     nesterov=args.nesterov,
 )
-scheduler = optim.lr_scheduler.StepLR(
-    optimizer, step_size=args.epochs_lr_decay, gamma=args.lr_decay_rate
-)
+# scheduler = optim.lr_scheduler.StepLR(
+#     optimizer, step_size=args.epochs_lr_decay, gamma=args.lr_decay_rate
+# )
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
 writer = None
-if args.tensorboard:
-    now = datetime.datetime.now()
-    log_identifier = file_name + "_" + now.strftime("%Y%m%d-%H%M%S")
-    log_dir = os.path.join("tensorboard_dir/new_BN", log_identifier)
-    writer = SummaryWriter(log_dir=log_dir)
-    print("| Tensorboard record: " + log_identifier)
-    writer.add_text("run-args", args.__repr__(), global_step=None, walltime=None)
 
 best_acc_1 = 0
 best_acc_2 = 0
@@ -588,7 +378,12 @@ if args.trajectory_dir is not None:
 else:
     trajectory_logger = None
 
-for epoch in range(start_epoch, start_epoch + num_epochs):
+for epoch in range(num_epochs):
+    print(
+        "\n=> Training Epoch [{:3d}/{:3d}], LR={:.4f}".format(
+            epoch, num_epochs, optimizer.param_groups[0]["lr"]
+        )
+    )
     start_time = time.time()
     # train
     if args.optim_type == "SGD":
@@ -601,18 +396,14 @@ for epoch in range(start_epoch, start_epoch + num_epochs):
         )
 
         train_acc, train_acc_5, train_loss = train(
-            net,
-            epoch,
-            optimizer,
-            tensorboard_writer=writer,
-            trajectory_logger=trajectory_logger,
+            net, optimizer, args.forward_samples, trajectory_logger=trajectory_logger,
         )
         scheduler.step()
     elif args.optim_type == "EntropySGD":
         pass
     elif args.optim_type == "backpropless":
         pass
-    save_model(net, save_point, args, 0)
+    save_model(net, save_point, file_name, args, 0)
     # test
     # net_test, _ = getNetwork(args, num_classes)
     # net_test.to(device)
@@ -629,11 +420,10 @@ for epoch in range(start_epoch, start_epoch + num_epochs):
     test_acc_df = test_with_std_mean(
         network_constructor,
         checkpoint,
-        epoch=epoch,
-        test_std_list=args.testing_noise,
+        noise_type=args.testing_noise_type,
         test_mean_list=args.testing_noise_mean,
+        test_std_list=args.testing_noise,
         sample_num=1,
-        writer=writer,
     )
 
     # TODO: not dealing with training & testing quant_level yet
@@ -653,7 +443,9 @@ for epoch in range(start_epoch, start_epoch + num_epochs):
 
     if best_metric_1 > best_acc_1:
         print(best_metric_1)
-        save_model(net, save_point, args, 1, {"acc": best_metric_1, "epoch": epoch})
+        save_model(
+            net, save_point, file_name, args, 1, {"acc": best_metric_1, "epoch": epoch}
+        )
         best_acc_1 = best_metric_1
 
     # if args.training_noise_mean is not None:
@@ -672,8 +464,7 @@ for epoch in range(start_epoch, start_epoch + num_epochs):
     epoch_time = time.time() - start_time
     elapsed_time += epoch_time
     print("| Elapsed time : %d:%02d:%02d" % (get_hms(elapsed_time)))
-    if type(writer) is SummaryWriter:
-        writer.flush()
+    print("| =====================================================")
 
 print("\n[Phase 4] : Testing model")
 print("* Test results : Acc@1 = {:.2%}".format(best_acc_1))

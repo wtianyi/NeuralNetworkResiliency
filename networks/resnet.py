@@ -122,14 +122,12 @@ class ResNet(nn.Module):
 
         block, num_blocks = cfg(depth)
 
-        self.conv1 = NoisyConv2d(in_channel, 64, kernel_size=7, stride=2, padding=3, bias=False)        
+        self.conv1 = NoisyConv2d(in_channel, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = NoisyBN(64)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, num_blocks[0], 1, use_dropout, dropout_rate)
         self.layer2 = self._make_layer(block, 128, num_blocks[1], 2, use_dropout, dropout_rate)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], 2, use_dropout, dropout_rate)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], 2, use_dropout, dropout_rate)        
-        self.avgpool = nn.AdaptiveAvgPool2d((1,1))
         self.fc = NoisyLinear(512*block.expansion, num_classes)
         self.set_sigma_list(sigma_list)
 
@@ -148,12 +146,11 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
-        out = self.maxpool(out)
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
-        out = self.avgpool(out)
+        out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         out = self.fc(out)
 
