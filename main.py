@@ -443,9 +443,7 @@ def train_one_epoch(epoch: int, deficit: bool):
     )
 
     # TODO: not dealing with training & testing quant_level yet
-    training_noise_stdev = (
-        args.training_noise if args.training_noise is not None else 0
-    )
+    training_noise_stdev = args.training_noise if args.training_noise is not None else 0
     training_noise_mean = (
         args.training_noise_mean[0] if args.training_noise_mean is not None else 0
     )
@@ -470,10 +468,13 @@ def train_one_epoch(epoch: int, deficit: bool):
     print("| =====================================================")
 
 
+net.apply(set_clean)
 for epoch in range(args.pre_deficit_epochs):
     train_one_epoch(epoch, False)
 
-for epoch in range(args.pre_deficit_epochs, args.pre_deficit_epochs + args.deficit_epochs):
+for epoch in range(
+    args.pre_deficit_epochs, args.pre_deficit_epochs + args.deficit_epochs
+):
     train_one_epoch(epoch, True)
 
 # re-initialize the optimizer and scheduler
@@ -486,6 +487,7 @@ optimizer = optim.SGD(
 )
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
+net.apply(set_noisy)
 for epoch in range(args.pre_deficit_epochs + args.deficit_epochs, num_epochs):
     train_one_epoch(epoch, False)
 
