@@ -298,7 +298,7 @@ def get_train_test_functions(
         test_std_list=[None],
         test_quantization_levels=[None],
         quantize_weights: bool = False,
-        deficit_list = [None],
+        deficit_list: List = [None],
         sample_num: int = 1,
     ):
         if test_std_list is None:

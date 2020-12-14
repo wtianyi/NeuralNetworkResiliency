@@ -165,6 +165,14 @@ parser.add_argument(
     default=0,
     help="The number of initial epochs of deficit training",
 )
+
+parser.add_argument(
+    "--pre_deficit_epochs",
+    type=int,
+    default=0,
+    help="The number of normal training epochs before deficit training",
+)
+
 # parser.add_argument('--test_with_std', action='store_true', help="fix mean, change std while testing")
 # parser.add_argument('--test_with_mean', action='store_true', help="fix std, change mean while testing")
 
@@ -248,7 +256,7 @@ print("\n[Phase 1] : Data Preparation")
 # start_epoch, num_epochs, batch_size, optim_type = cf.start_epoch, args.num_epochs, args.batch_size, args.optim_type
 start_epoch, num_epochs, batch_size, optim_type = (
     0,
-    args.num_epochs,
+    args.pre_deficit_epochs + args.deficit_epochs + args.num_epochs,
     args.batch_size,
     args.optim_type,
 )
@@ -379,14 +387,17 @@ else:
     trajectory_logger = None
 
 # wandb.watch(net, criterion, log="all", log_freq=1000)
-trainloader.impair()
-for epoch in range(num_epochs):
+def train_one_epoch(epoch: int, deficit: bool):
+    global best_acc_1
+    global elapsed_time
     print(
-        "\n=> Training Epoch [{:3d}/{:3d}], LR={:.4f}".format(
-            epoch, num_epochs, optimizer.param_groups[0]["lr"]
+        "\n=> Training Epoch [{:3d}/{:3d}], LR={:.4f}, deficit={}".format(
+            epoch, num_epochs, optimizer.param_groups[0]["lr"], deficit
         )
     )
-    if epoch >= args.deficit_epochs:
+    if deficit:
+        trainloader.impair()
+    else:
         trainloader.cure()
     start_time = time.time()
     # train
@@ -433,7 +444,7 @@ for epoch in range(num_epochs):
 
     # TODO: not dealing with training & testing quant_level yet
     training_noise_stdev = (
-        args.training_noise[0] if args.training_noise is not None else 0
+        args.training_noise if args.training_noise is not None else 0
     )
     training_noise_mean = (
         args.training_noise_mean[0] if args.training_noise_mean is not None else 0
@@ -453,24 +464,31 @@ for epoch in range(num_epochs):
         )
         best_acc_1 = best_metric_1
 
-    # if args.training_noise_mean is not None:
-    #     if args.training_noise_mean[0] > 0:
-    #         best_metric_2 = sum(test_acc_dict[i] for i in test_mean_pos) / len(test_mean_pos)
-    #     elif args.training_noise_mean[0] < 0:
-    #         best_metric_2 = sum(test_acc_dict[i] for i in test_mean_neg) / len(test_mean_neg)
-    # else:
-    #     best_metric_2 = test_acc_dict[0.0]
-
-    # if best_metric_2 > best_acc_2:
-    #     print (best_metric_2)
-    #     save_model(net, save_point, args, 2, {"acc": best_metric_2, "epoch": epoch})
-    #     best_acc_2 = best_metric_2
-
     epoch_time = time.time() - start_time
     elapsed_time += epoch_time
     print("| Elapsed time : %d:%02d:%02d" % (get_hms(elapsed_time)))
     print("| =====================================================")
 
+
+for epoch in range(args.pre_deficit_epochs):
+    train_one_epoch(epoch, False)
+
+for epoch in range(args.pre_deficit_epochs, args.pre_deficit_epochs + args.deficit_epochs):
+    train_one_epoch(epoch, True)
+
+# re-initialize the optimizer and scheduler
+optimizer = optim.SGD(
+    net.parameters(),
+    lr=args.lr,
+    momentum=args.momentum,
+    weight_decay=args.regularization,
+    nesterov=args.nesterov,
+)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+
+for epoch in range(args.pre_deficit_epochs + args.deficit_epochs, num_epochs):
+    train_one_epoch(epoch, False)
+
 print("\n[Phase 4] : Testing model")
 print("* Test results : Acc@1 = {:.2%}".format(best_acc_1))
-print("* Test results : Acc@1 = {:.2%}".format(best_acc_2))
+# print("* Test results : Acc@1 = {:.2%}".format(best_acc_2))
