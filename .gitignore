@@ -15,3 +15,4 @@ pics
 *.xlsx
 # Ignore dynaconf secret files
 .secrets.*
+/wandb/

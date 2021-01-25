@@ -5,6 +5,7 @@ import os
 import shutil
 import numpy as np
 import random
+import argparse
 
 
 def set_random_seed(seed: int, using_cuda: bool = False) -> None:
@@ -217,6 +218,7 @@ def classwise_accuracy(
     correct = pred.T.eq(target.view(-1)).sum(dim=0).bool()
     counts = target.bincount(minlength=num_classes)
     accuracy = target.bincount(weights=correct, minlength=num_classes) / counts
+    accuracy[accuracy.isnan()] = 0 # handle zero-division
     # classes = torch.arange(counts.size(0))
     return accuracy, counts  # , classes
 
@@ -238,3 +240,26 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+
+def boolean_flag(
+    parser: argparse.ArgumentParser, name: str, default: bool = False, help: str = None
+) -> None:
+    """Add a boolean flag to argparse parser.
+
+    Parameters
+    ----------
+    parser (:obj:`argparse.ArgumentParser`):
+        parser to add the flag to
+    name (:obj:`str`):
+        --<name> will enable the flag, while --no-<name> will disable it
+    default (:obj:`bool`):
+        default value of the flag
+    help (:obj:`str`):
+        help string for the flag
+    """
+    dest = name.replace("-", "_")
+    parser.add_argument(
+        "--" + name, action="store_true", default=default, dest=dest, help=help
+    )
+    parser.add_argument("--no-" + name, action="store_false", dest=dest)

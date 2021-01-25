@@ -200,12 +200,21 @@ parser.add_argument(
     action="store_true",
     help="Also quantize the weights with the specified quantization_levels",
 )
+boolean_flag(
+    parser,
+    "log",
+    default=True,
+    help="--log will enable wandb logging, --no-log will disable it",
+)
 
 if __name__ != "__main__":
     sys.exit(1)
 
 args = parser.parse_args()
-wandb.init(config=args)
+if args.log:
+    wandb.init(config=args)
+else:
+    wandb.init(mode="disabled")
 
 # FIXME: this is assuming that `args.training_noise` always is a scalar, and that `args.testing_noise` is a list of scalars
 # FIXME: this is assuming that `args.training_noise_mean` always has only one element, and that `args.testing_noise_mean` is a list of scalars
@@ -323,10 +332,9 @@ if args.testOnly:
             + "/"
             + file_name
             + "_metric1.pkl"
+            # + "_current.pkl"
         )
-        print(
-            f"checkpoint_file = {'./checkpoint/'+args.dataset+'/'+args.training_noise_type+'/'+file_name + '_metric1.pkl'}"
-        )
+    print(f"loading checkpoint_file = {checkpoint_file}")
     checkpoint = torch.load(checkpoint_file)
 
     test_acc_df = test_with_std_mean(
@@ -347,7 +355,7 @@ if args.testOnly:
         json.dump(
             {
                 "args": vars(args),
-                "test_acc_df": test_acc_df.to_json(),  # load with `pd.read_json()`
+                "test_acc_df": test_acc_df.reset_index().to_json(),  # load with `pd.read_json()`
             },
             f,
         )
@@ -409,6 +417,7 @@ def train_one_epoch(epoch: int, deficit: bool):
             perturbation_level=args.training_noise,
             perturbation_mean=args.training_noise_mean,
         )
+        # save_model(net, "/tmp/", f"initial_{args.device}", args, 0)
 
         train_acc, train_acc_5, train_loss = train(
             net, optimizer, args.forward_samples, trajectory_logger=trajectory_logger,
@@ -438,7 +447,8 @@ def train_one_epoch(epoch: int, deficit: bool):
         noise_type=args.testing_noise_type,
         test_mean_list=args.testing_noise_mean,
         test_std_list=args.testing_noise,
-        deficit_list=[True, False],
+        # deficit_list=[True, False],
+        deficit_list=[False],
         sample_num=1,
     )
 
@@ -447,20 +457,20 @@ def train_one_epoch(epoch: int, deficit: bool):
     training_noise_mean = (
         args.training_noise_mean[0] if args.training_noise_mean is not None else 0
     )
-    metric_1 = test_acc_df[
+    same_condition_test_df = test_acc_df[
         (
             test_acc_df["mean"] == training_noise_mean
         )  # & (test_acc_df['stdev'] == training_noise_stdev)
-    ]["test_acc_avg"]
-    assert len(metric_1) > 0, "No metric1 because not testing for the training case"
-    best_metric_1 = metric_1.values[0]
+    ]["test_acc"]
+    assert len(same_condition_test_df) > 0, "No metric1 because not testing for the training case"
+    same_condition_acc = np.mean(same_condition_test_df.values)
 
-    if best_metric_1 > best_acc_1:
-        print(best_metric_1)
+    if same_condition_acc > best_acc_1:
+        print(same_condition_acc)
         save_model(
-            net, save_point, file_name, args, 1, {"acc": best_metric_1, "epoch": epoch}
+            net, save_point, file_name, args, 1, {"acc": same_condition_acc, "epoch": epoch}
         )
-        best_acc_1 = best_metric_1
+        best_acc_1 = same_condition_acc
 
     epoch_time = time.time() - start_time
     elapsed_time += epoch_time

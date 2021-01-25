@@ -3,7 +3,21 @@ import torch.quantization
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
-from networks import set_gaussian_noise, set_uniform_noise, set_clean, set_noisy, set_fixtest, disable_observer, disable_fake_quant, get_qconfig, CUSTOM_MODULE_MAPPING, CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST, children_of_class, NoisyLayer, CustomFakeQuantize
+from networks import (
+    set_gaussian_noise,
+    set_uniform_noise,
+    set_clean,
+    set_noisy,
+    set_fixtest,
+    disable_observer,
+    disable_fake_quant,
+    get_qconfig,
+    CUSTOM_MODULE_MAPPING,
+    CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST,
+    children_of_class,
+    NoisyLayer,
+    CustomFakeQuantize,
+)
 import pandas as pd
 import numpy as np
 import argparse
@@ -16,13 +30,17 @@ from itertools import product
 
 import wandb
 
+
 def prepare_network_perturbation(
-        net, noise_type: str = 'gaussian', fixtest: bool = False,
-        perturbation_level: Union[None, float, Iterable[float]] = None,
-        perturbation_mean: Union[None, float, Iterable[float]] = None):
+    net,
+    noise_type: str = "gaussian",
+    fixtest: bool = False,
+    perturbation_level: Union[None, float, Iterable[float]] = None,
+    perturbation_mean: Union[None, float, Iterable[float]] = None,
+):
     """Set the perturbation and quantization of the network in-place
     """
-    if noise_type == 'gaussian':
+    if noise_type == "gaussian":
         net.apply(set_gaussian_noise)
         if isinstance(net, nn.DataParallel):
             net.module.set_sigma_list(perturbation_level)
@@ -30,7 +48,7 @@ def prepare_network_perturbation(
         else:
             net.set_sigma_list(perturbation_level)
             net.set_mu_list(perturbation_mean)
-    elif noise_type == 'uniform':
+    elif noise_type == "uniform":
         net.apply(set_uniform_noise)
         if isinstance(net, nn.DataParallel):
             net.module.set_sigma_list(1)
@@ -42,8 +60,12 @@ def prepare_network_perturbation(
 
 
 def prepare_network_quantization(
-        net, num_quantization_levels: int, calibration_dataloader: torch.utils.data.DataLoader,
-        qat: bool = False, num_calibration_batchs: int = 10):  # The last two arguments are redundant for now
+    net,
+    num_quantization_levels: int,
+    calibration_dataloader: torch.utils.data.DataLoader,
+    qat: bool = False,
+    num_calibration_batchs: int = 10,
+):  # The last two arguments are redundant for now
     if num_quantization_levels is None:
         return
     # Specify quantization configuration
@@ -54,18 +76,19 @@ def prepare_network_quantization(
     device = next(net.parameters()).device
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(calibration_dataloader):
-            inputs, targets = inputs.to(
-                device=device), targets.to(device=device)
+            inputs, targets = inputs.to(device=device), targets.to(device=device)
             outputs = net(inputs)
-    print('Post Training Quantization: Calibration done')
+    print("Post Training Quantization: Calibration done")
     net.enable_quantization()
     for quant in children_of_class(net, CustomFakeQuantize):
         quant.disable_observer()
 
 
 def quantize_network(
-    net: nn.Module, num_weight_quant_levels: int, num_activation_quant_levels: int,
-    calibration_dataloader: torch.utils.data.DataLoader
+    net: nn.Module,
+    num_weight_quant_levels: int,
+    num_activation_quant_levels: int,
+    calibration_dataloader: torch.utils.data.DataLoader,
 ):
     net.qconfig = get_qconfig(num_weight_quant_levels, num_weight_quant_levels)
 
@@ -75,8 +98,7 @@ def quantize_network(
         disable_observer(activation_quant)
         disable_fake_quant(activation_quant)
     torch.quantization.prepare(
-        net, inplace=True,
-        allow_list=CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST
+        net, inplace=True, allow_list=CUSTOM_QCONFIG_PROPAGATE_WHITE_LIST
     )
     # Calibrate with the given set
     net.eval()
@@ -87,9 +109,10 @@ def quantize_network(
             # targets = targets.to(device=device)
             outputs = net(inputs)
     torch.quantization.convert(
-        net, inplace=True,
+        net,
+        inplace=True,
         # modify below to choose whether to use custom quantized layers
-        mapping=CUSTOM_MODULE_MAPPING
+        mapping=CUSTOM_MODULE_MAPPING,
     )
 
     # print('Quantization Config:', net.qconfig)
@@ -113,7 +136,14 @@ def quantize_network(
 class Clipper(dict):  # inherit dict to be serializable
     """A scheduler for grad clipping
     """
-    def __init__(self, max_norm: float = None, decay_factor: float = 1, decay_interval: int = None, max_decay_times: int = None):
+
+    def __init__(
+        self,
+        max_norm: float = None,
+        decay_factor: float = 1,
+        decay_interval: int = None,
+        max_decay_times: int = None,
+    ):
         assert max_norm is None or max_norm > 0
         assert decay_factor > 0 and decay_factor <= 1
         assert decay_interval is None or decay_interval > 0
@@ -136,7 +166,10 @@ class Clipper(dict):  # inherit dict to be serializable
 
     def step(self):
         self.steps += 1
-        if self.steps % self.decay_interval == 0 and self.decay_counter < self.max_decay_times:
+        if (
+            self.steps % self.decay_interval == 0
+            and self.decay_counter < self.max_decay_times
+        ):
             self.decay_counter += 1
             self.max_norm *= self.decay_factor
 
@@ -146,7 +179,11 @@ class Clipper(dict):  # inherit dict to be serializable
 
     def __str__(self):
         keys = [
-            "clip_function", "max_norm", "decay_interval", "decay_factor", "max_decay_times"
+            "clip_function",
+            "max_norm",
+            "decay_interval",
+            "decay_factor",
+            "max_decay_times",
         ]
         string = ", ".join(["{}={}".format(k, getattr(self, k)) for k in keys])
         return "Clipper(" + string + ")"
@@ -164,8 +201,9 @@ class Clipper(dict):  # inherit dict to be serializable
             elif len(toks) == 3:
                 clipper = Clipper(float(toks[0]), float(toks[1]), int(toks[2]))
             elif len(toks) == 4:
-                clipper = Clipper(float(toks[0]), float(
-                    toks[1]), int(toks[2]), int(toks[3]))
+                clipper = Clipper(
+                    float(toks[0]), float(toks[1]), int(toks[2]), int(toks[3])
+                )
             else:
                 msg = "Required format: <init_max_norm>[:<decay_factor>:<decay_interval>[:<max_decay_count>]]"
                 raise argparse.ArgumentTypeError(msg)
@@ -173,6 +211,7 @@ class Clipper(dict):  # inherit dict to be serializable
             msg = "Required format: <init_max_norm>[:<decay_factor>:<decay_interval>[:<max_decay_count>]]"
             raise argparse.ArgumentTypeError(msg)
         return clipper
+
 
 # class_names, trainloader, testloader, device, forward_samples,
 #
@@ -206,7 +245,7 @@ def get_train_test_functions(
             inputs, targets = (
                 inputs.to(device),
                 targets.to(device),
-            )  # GPU settings
+            )
             batch_size = targets.size(0)
 
             optimizer.zero_grad()
@@ -298,7 +337,7 @@ def get_train_test_functions(
         test_std_list=[None],
         test_quantization_levels=[None],
         quantize_weights: bool = False,
-        deficit_list: List = [None],
+        deficit_list: List = [False],  # by default disable impairment
         sample_num: int = 1,
     ):
         if test_std_list is None:
@@ -309,15 +348,13 @@ def get_train_test_functions(
             test_quantization_levels = [None]
         results = []
         for stdev, mean, quant_levels, deficit in product(
-            test_std_list,
-            test_mean_list,
-            test_quantization_levels,
-            deficit_list
+            test_std_list, test_mean_list, test_quantization_levels, deficit_list
         ):
             if deficit is True:
                 test_loader.impair()
             elif deficit is False:
                 test_loader.cure()
+
             def prepare_and_test():
                 net = network_constructor()
                 net.load_state_dict(checkpoint["state_dict"], strict=False)
@@ -355,18 +392,21 @@ def get_train_test_functions(
             acc_tuple_list = [prepare_and_test() for _ in range(sample_num)]
             test_acc_list, test_acc5_list = zip(*acc_tuple_list)
             results.append(
-                {
-                    "stdev": stdev,
-                    "mean": mean,
-                    "quant_levels": quant_levels,
-                    "data_state": test_loader.state,
-                    "test_acc": test_acc_list,
-                    "test_acc5": test_acc5_list,
-                }
+                pd.DataFrame(
+                    {
+                        "stdev": stdev,
+                        "mean": mean,
+                        "quant_levels": quant_levels,
+                        "data_state": test_loader.state,
+                        "test_acc": test_acc_list,
+                        "test_acc5": test_acc5_list,
+                    }
+                )
             )
-        df = pd.DataFrame(results)
-        df["test_acc_avg"] = df["test_acc"].apply(np.mean)
-        df["test_acc5_avg"] = df["test_acc5"].apply(np.mean)
+        df = pd.concat(results)
+        # df["test_acc_avg"] = df["test_acc"].apply(np.mean)
+        # df["test_acc5_avg"] = df["test_acc5"].apply(np.mean)
+        df["my_epoch"] = epoch
         df = df.fillna(0)
         test_table = wandb.Table(dataframe=df)
         wandb.log({"test_table": test_table}, step=global_step)
