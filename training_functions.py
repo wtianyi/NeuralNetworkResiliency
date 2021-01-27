@@ -1,3 +1,4 @@
+from networks.noisy_layers import NoisyIdentity
 import torch
 import torch.quantization
 from torch import nn
@@ -23,7 +24,13 @@ import numpy as np
 import argparse
 from typing import List, Union, Iterable, Callable
 import os, sys
-from utils import create_dir, AverageMeter, accuracy, classwise_accuracy
+from utils import (
+    create_dir,
+    AverageMeter,
+    accuracy,
+    classwise_accuracy,
+    get_module_device,
+)
 import pandas as pd
 from trajectory import TrajectoryLogger, TrajectoryLog
 from itertools import product
@@ -439,3 +446,20 @@ def save_model(
     save_file = os.path.join(save_point, file_name + "_current.pkl")
     torch.save(state, save_file)
     print(f"| Saved Current model to \n {save_file}")
+
+
+def inject_scaling_noise_layers(model: nn.Module, sigma: float):
+    """Inject a NoisyIdentity layer after each noisy layer. Following
+    `torch.quantization.quantize.convert`'s approach'
+    """
+    reassign = {}
+    for name, module in model.named_children():
+        if not isinstance(module, NoisyLayer):
+            inject_scaling_noise_layers(module, sigma)
+        elif not isinstance(module, NoisyIdentity):
+            reassign[name] = nn.Sequential(
+                module, NoisyIdentity(sigma).to(get_module_device(module))
+            )
+    for key, value in reassign.items():
+        model._modules[key] = value
+    return model

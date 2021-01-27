@@ -1,8 +1,14 @@
 from torch import nn
+from typing import Type
 
 
 def children_of_class(module, target_class):
-    """A generator yielding layers of the specified class in a module"""
+    """A generator yielding layers of the specified class in a module
+
+    Specially, this function won't go recursively into a child module if it is
+    of the target class.
+
+    """
     if isinstance(module, target_class):
         yield module
     else:

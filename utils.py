@@ -263,3 +263,10 @@ def boolean_flag(
         "--" + name, action="store_true", default=default, dest=dest, help=help
     )
     parser.add_argument("--no-" + name, action="store_false", dest=dest)
+
+
+def get_module_device(module: nn.Module):
+    try:
+        return next(module.parameters()).device
+    except:
+        print(module)

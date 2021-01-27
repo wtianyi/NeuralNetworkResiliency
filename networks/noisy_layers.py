@@ -326,8 +326,7 @@ class NoisyIdentity(NoisyLayer, nn.Module):
         self.noisy = False
 
     def extra_repr(self):
-        s = super().extra_repr()
-        s += ', sigma={sigma}'
+        s = 'sigma={sigma}'
         return s.format(**self.__dict__)
 
 class NoisyBN(NoisyLayer, nn.BatchNorm2d):
