@@ -300,24 +300,31 @@ class NoisyIdentity(NoisyLayer, nn.Module):
     noisy = True
     def __init__(self, sigma=1):
         self.sigma = sigma
-        self.fix_flag = False
+        self._fixtest_flag = False
         super(NoisyIdentity, self).__init__()
 
+    @property
+    def fixtest_flag(self):
+        return self._fixtest_flag
+    @fixtest_flag.setter
+    def fixtest_flag(self, fixtest_flag: bool):
+        self._fixtest_flag = fixtest_flag
+
     def forward(self, x):
-        if self.noisy and self.sigma and self.training:
-            out = torch.ones_like(x) + torch.randn_like(x) * self.sigma
-            return out * x
-
-        elif self.noisy and self.sigma and (not self.training) and (not self.fix_flag):
-            out = torch.ones_like(x) + torch.randn_like(x) * self.sigma
-            self.register_buffer('out_fix', out)
-            return out * x
-
-        elif self.noisy and self.sigma and (not self.training) and self.fix_flag:
-            if x.size() == self.out_fix.size():
-                return self.out_fix * x
+        self.input_shape = x.shape
+        if self.noisy and self.sigma:
+            if self.fixtest_flag:
+                if hasattr(self, "out_fix"):
+                    if x.size() == self.out_fix.size():
+                        return self.out_fix * x
+                    else:
+                        return self.out_fix[: x.size(0)] * x
+                else:
+                    out = torch.ones_like(x) + torch.randn_like(x) * self.sigma
+                    self.register_buffer("out_fix", out)
             else:
-                return self.out_fix[:x.size(0)] * x                
+                out = torch.ones_like(x) + torch.randn_like(x) * self.sigma
+            return out * x
         else:
             return x
 
@@ -501,11 +508,11 @@ def set_fixtest(m):
 
 def set_noisyid_fix(m):
     if isinstance(m, NoisyIdentity):
-        m.fix_flag = True
+        m._fixtest_flag = True
 
 def set_noisyid_unfix(m):
     if isinstance(m, NoisyIdentity):
-        m.fix_flag = False    
+        m._fixtest_flag = False
 
 def set_grad_with_delta(m):
     if isinstance(m, NoisyConv2d) or isinstance(m, NoisyLinear) or isinstance(m, NoisyBN):

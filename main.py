@@ -173,6 +173,14 @@ parser.add_argument(
     help="The number of normal training epochs before deficit training",
 )
 
+parser.add_argument(
+    "--scaling_noise",
+    type=float,
+    default=0.0,
+    help="The hardware output scaling noise."
+    " A multiplicative noise applied to each output entry of each noisy layer."
+    " Only effective in `testOnly` mode",
+)
 # parser.add_argument('--test_with_std', action='store_true', help="fix mean, change std while testing")
 # parser.add_argument('--test_with_mean', action='store_true', help="fix std, change mean while testing")
 
@@ -257,7 +265,7 @@ if use_cuda:
         device = torch.device("cuda:{:d}".format(args.device[0]))
     else:
         device = torch.device("cuda")
-        args.device = range(torch.cuda.device_count())
+        args.device = list(range(torch.cuda.device_count()))
 
 
 ###################################################
@@ -293,6 +301,7 @@ print(file_name)
 # net.apply(conv_init)
 criterion = nn.CrossEntropyLoss()
 
+# FIXME: multi-device treatment seems not correct
 if use_cuda:
     if torch.cuda.device_count() > 1 and len(args.device) > 1:
         net = torch.nn.DataParallel(net, device_ids=range(torch.cuda.device_count()))
@@ -335,7 +344,7 @@ if args.testOnly:
             # + "_current.pkl"
         )
     print(f"loading checkpoint_file = {checkpoint_file}")
-    checkpoint = torch.load(checkpoint_file)
+    checkpoint = torch.load(checkpoint_file, map_location=device)
 
     test_acc_df = test_with_std_mean(
         network_constructor,
@@ -346,6 +355,7 @@ if args.testOnly:
         test_quantization_levels=args.test_quantization_levels,
         sample_num=args.test_sample_num,
         quantize_weights=args.test_quantize_weights,
+        scaling_noise=args.scaling_noise,
     )
 
     test_acc_df["start_time"] = all_start_time
@@ -440,7 +450,7 @@ def train_one_epoch(epoch: int, deficit: bool):
         + file_name
         + "_current.pkl"
     )
-    checkpoint = torch.load(checkpoint_file)
+    checkpoint = torch.load(checkpoint_file, map_location=device)
     test_acc_df = test_with_std_mean(
         network_constructor,
         checkpoint,
@@ -462,13 +472,20 @@ def train_one_epoch(epoch: int, deficit: bool):
             test_acc_df["mean"] == training_noise_mean
         )  # & (test_acc_df['stdev'] == training_noise_stdev)
     ]["test_acc"]
-    assert len(same_condition_test_df) > 0, "No metric1 because not testing for the training case"
+    assert (
+        len(same_condition_test_df) > 0
+    ), "No metric1 because not testing for the training case"
     same_condition_acc = np.mean(same_condition_test_df.values)
 
     if same_condition_acc > best_acc_1:
         print(same_condition_acc)
         save_model(
-            net, save_point, file_name, args, 1, {"acc": same_condition_acc, "epoch": epoch}
+            net,
+            save_point,
+            file_name,
+            args,
+            1,
+            {"acc": same_condition_acc, "epoch": epoch},
         )
         best_acc_1 = same_condition_acc
 

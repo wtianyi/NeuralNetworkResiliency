@@ -346,6 +346,7 @@ def get_train_test_functions(
         quantize_weights: bool = False,
         deficit_list: List = [False],  # by default disable impairment
         sample_num: int = 1,
+        scaling_noise: float = 0,
     ):
         if test_std_list is None:
             test_std_list = [None]
@@ -389,6 +390,8 @@ def get_train_test_functions(
                         calibration_dataloader=train_loader,
                         qat=False,
                     )
+                if scaling_noise:
+                    inject_scaling_noise_layers(net, scaling_noise)
                 test_acc, test_acc_5 = test(net, test_loader)
                 return test_acc.cpu().item(), test_acc_5.cpu().item()
 
@@ -407,6 +410,7 @@ def get_train_test_functions(
                         "data_state": test_loader.state,
                         "test_acc": test_acc_list,
                         "test_acc5": test_acc5_list,
+                        "scaling_noise": scaling_noise,
                     }
                 )
             )
